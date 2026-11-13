@@ -610,11 +610,28 @@ bool TextureCache::scale_stale(const Image* img) {
            (img->scale != g_res_scale || img->scale_y != g_res_scale_y);
 }
 
+// Internal resolution scaling is held at 1x for Fire Emblem Warriors: its lighting/composition runs partly in
+// compute shaders whose dispatch grid and image coordinates are in guest texels, and some fragment passes derive
+// texel coordinates from gl_FragCoord; over scaled render targets they covered only the top-left part of the
+// screen. The fix (guest-space FragCoord, scaled compute) is pending; HWDER_ALLOW_RES_SCALE=1 lets it be tried.
+static bool res_scale_allowed(float sx, float sy) {
+    static const bool allowed = getenv("HWDER_ALLOW_RES_SCALE") && getenv("HWDER_ALLOW_RES_SCALE")[0] == '1';
+    if (allowed || (sx == 1.0f && sy == 1.0f)) return true;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        hw_log("vk: internal resolution scale %.3fx x %.3fx requested; held at 1x for this game "
+               "(compute passes do not support scaled targets yet; HWDER_ALLOW_RES_SCALE=1 overrides)", sx, sy);
+    }
+    return false;
+}
+
 // Runtime scale change (F1 menu, window resize with "unlocked"): render targets are recreated at the new
 // size the next time the game renders into them (get() with a render-target request), not here. Frames
 // already rendered and queued for presentation (120 fps keeps up to two ahead) keep their images until
 // they are shown; dropping them made the presenter re-upload stale guest memory ("jumping" on resize).
 void TextureCache::apply_scale(float sx, float sy) {
+    if (!res_scale_allowed(sx, sy)) sx = sy = 1.0f;
     if (sx == g_res_scale && sy == g_res_scale_y) return;
     g_res_scale = sx;
     g_res_scale_y = sy;
@@ -655,6 +672,7 @@ Image* TextureCache::create(u64 addr, const ImageInfo& info) {
             if (ey) g_res_scale_y = (float)atof(ey);
             g_res_scale = std::clamp(g_res_scale, 0.5f, 4.0f);
             g_res_scale_y = std::clamp(g_res_scale_y, 0.5f, 4.0f);
+            if (!res_scale_allowed(g_res_scale, g_res_scale_y)) g_res_scale = g_res_scale_y = 1.0f;
             if (g_res_scale != 1.0f || g_res_scale_y != 1.0f)
                 hw_log("vk: internal resolution scale %.3fx x %.3fx for large render targets", g_res_scale, g_res_scale_y);
         }

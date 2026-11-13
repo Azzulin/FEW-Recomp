@@ -11,7 +11,8 @@ param(
     [string]$Shots = '',             # screenshot times in s, "10,20,30" -> build\shots\<Tag>_<s>.png
     [string]$Tag = 'run',
     [switch]$Fresh,                  # start with an empty save
-    [string]$Env = ''                # extra variables, "NAME=VALUE;NAME=VALUE" (e.g. HWDER_IPC_TRACE=1)
+    [string]$Env = '',               # extra variables, "NAME=VALUE;NAME=VALUE" (e.g. HWDER_IPC_TRACE=1)
+    [string]$Ini = ''                # extra hwder_settings.ini lines, "key=value;key=value" (e.g. res_scale=2.000)
 )
 # -File passes everything as text: split here.
 $ShotList = @($Shots -split ',' | Where-Object { $_.Trim() } | ForEach-Object { [double]$_ })
@@ -28,7 +29,8 @@ $exe = Join-Path $run 'few.exe'
 if (Test-Path -LiteralPath $exe) { Remove-Item -LiteralPath $exe -Force }
 New-Item -ItemType HardLink -Path $exe -Target (Join-Path $play 'few.exe') | Out-Null
 # Settings: the player's game/keys/update paths, nothing else.
-$src = Get-Content -LiteralPath (Join-Path $play 'hwder_settings.ini') | Where-Object { $_ -match '^(version|nsp_path|keys_path|update_path)=' }
+$src = @(Get-Content -LiteralPath (Join-Path $play 'hwder_settings.ini') | Where-Object { $_ -match '^(version|nsp_path|keys_path|update_path)=' })
+$src += @($Ini -split ';' | Where-Object { $_.Trim() })
 Set-Content -LiteralPath (Join-Path $run 'hwder_settings.ini') -Value $src -Encoding utf8
 if ($Fresh -and (Test-Path -LiteralPath (Join-Path $run 'save'))) { Remove-Item -LiteralPath (Join-Path $run 'save') -Recurse -Force }
 $log = Join-Path $run 'hwder.log'

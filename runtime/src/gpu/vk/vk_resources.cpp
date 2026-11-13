@@ -432,7 +432,13 @@ bool VkRenderer::bind_resources(const shader::Resources& res, StageLayout* sl, V
     }
     // sampled textures
     std::optional<ProfScope> texs(std::in_place, kProfTextures);
+    u32 tex_index = 0;
     for (const auto& t : res.textures) {
+        const u32 k = tex_index++;
+        // Fragment stage: remember which textures are scaled render targets (PushConstants::scaled_textures).
+        auto note_scaled = [&](const Image* img) {
+            if (cur_stage_ == 4 && k < 32 && img && (img->scale != 1.0f || img->scale_y != 1.0f)) fs_scaled_tex_mask_ |= 1u << k;
+        };
         u32 n = std::max(1u, t.count);
         VkWriteDescriptorSet& w = add_write(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, n);
         size_t first = dw.images.size();
@@ -469,6 +475,7 @@ bool VkRenderer::bind_resources(const shader::Resources& res, StageLayout* sl, V
                     ProfScope hps(kProfTexHit);
                     st_.tic_hit++;
                     tc_.validate(te->img);
+                    note_scaled(te->img);
                     if (te->view) ii.imageView = te->view;
                     if (drawlog_active()) {
                         char t[96];
@@ -497,6 +504,7 @@ bool VkRenderer::bind_resources(const shader::Resources& res, StageLayout* sl, V
                     st_.tic_miss++;
                     Subresource sub;
                     Image* img = tc_.get(a, info, &sub);
+                    note_scaled(img);
                     VkComponentMapping swz{tic_swizzle((tic[0] >> 19) & 7), tic_swizzle((tic[0] >> 22) & 7),
                                            tic_swizzle((tic[0] >> 25) & 7), tic_swizzle((tic[0] >> 28) & 7)};
                     if (info.fmt.swizzle.r != VK_COMPONENT_SWIZZLE_IDENTITY) {

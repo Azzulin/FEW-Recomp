@@ -534,6 +534,9 @@ private:
         std::vector<VkBufferView> texels;
     };
     bool draw_samples_rt_ = false;  // the draw being built samples a render target (post-process pass)
+    // Fragment-stage textures (bit = index in the stage's Resources::textures, first 32) bound to a render target
+    // allocated at the internal resolution scale: their texel fetches (TLDS) scale the guest's coordinates.
+    u32 fs_scaled_tex_mask_ = 0;
     int cur_stage_ = 0;                // stage being bound
     // ---- object blending for the game-drawn in-between frame (HWDER_GAME_INTERP, drawn by interp_draw.cpp)
     // with a blended camera; here every draw's vertex-stage transforms (c3: world matrix, bone palette)

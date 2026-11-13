@@ -776,6 +776,10 @@ void VkRenderer::record_draw(const u32* regs, const DrawParams& p, const Framebu
                     }
         }
     }
+    // Texel fetches from scaled render targets (shader TLDS): which fragment textures are scaled, and by how much.
+    pc.viewport_scale[2] = g_res_scale;
+    pc.viewport_scale[3] = g_res_scale_y;
+    pc.scaled_textures = fs_scaled_tex_mask_;
     pc.base_vertex = p.base_vertex;
     pc.base_instance = p.base_instance - p.instance;
     for (u32 i = 0; i < fb.num_colors; i++)
@@ -883,6 +887,7 @@ void VkRenderer::do_draw(const u32* regs, const DrawParams& p, const void* inlin
     VkDescriptorSet sets[5] = {};
     std::vector<std::function<void()>> post;
     draw_samples_rt_ = false;
+    fs_scaled_tex_mask_ = 0;
     u32 pools[6] = {regs[TexHeader], regs[TexHeader + 1], regs[TexHeader + 2],
                     regs[TexSampler], regs[TexSampler + 1], regs[TexSampler + 2]};
     bool linked = regs[SamplerBinding] == 1;

@@ -343,29 +343,44 @@ void Translator::emit_tex(Inst in, Op op) {
         u32 handle = in.bits(36, 13) * 4;
         bool f16 = !in.bit(59);
         TextureType ty = TextureType::Tex2D;
-        Id coords = 0, lod = 0, offset = 0;
+        std::vector<Id> c;  // integer coordinates: x [, y [, z or layer]]
+        Id lod = 0, offset = 0;
         auto si = [&](u32 r) { return b.bitcast(t_s32, R(r)); };
-        auto iv = [&](std::vector<Id> c) { return b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, u32(c.size())), c); };
         auto off2 = [&](u32 r) {
             Id v = R(r);
             auto sx = [&](u32 o) { return b.bitcast(t_s32, bfe(v, u(o), u(4), true)); };
             return b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, 2), {sx(0), sx(4)});
         };
         switch (target) {
-        case 0: ty = TextureType::Tex1D; coords = si(ra); break;
-        case 1: ty = TextureType::Tex1D; coords = si(ra); lod = si(rb); break;
-        case 2: coords = iv({si(ra), si(rb)}); break;
-        case 4: coords = iv({si(ra), si(ra + 1)}); offset = off2(rb); break;
-        case 5: coords = iv({si(ra), si(ra + 1)}); lod = si(rb); break;
+        case 0: ty = TextureType::Tex1D; c = {si(ra)}; break;
+        case 1: ty = TextureType::Tex1D; c = {si(ra)}; lod = si(rb); break;
+        case 2: c = {si(ra), si(rb)}; break;
+        case 4: c = {si(ra), si(ra + 1)}; offset = off2(rb); break;
+        case 5: c = {si(ra), si(ra + 1)}; lod = si(rb); break;
         case 6: log_once("TLDS multisample fetch read as sample 0 of a single-sample view");
-                coords = iv({si(ra), si(ra + 1)}); break;
-        case 7: ty = TextureType::Tex3D; coords = iv({si(ra), si(ra + 1), si(rb)}); break;
+                c = {si(ra), si(ra + 1)}; break;
+        case 7: ty = TextureType::Tex3D; c = {si(ra), si(ra + 1), si(rb)}; break;
         case 8: ty = TextureType::Tex2DArray;
-                coords = iv({si(ra + 1), si(rb), b.bitcast(t_s32, op2(spv::OpBitwiseAnd, t_u32, R(ra), u(0xFFFF)))}); break;
-        case 12: coords = iv({si(ra), si(ra + 1)}); lod = si(rb); offset = off2(rb + 1); break;
+                c = {si(ra + 1), si(rb), b.bitcast(t_s32, op2(spv::OpBitwiseAnd, t_u32, R(ra), u(0xFFFF)))}; break;
+        case 12: c = {si(ra), si(ra + 1)}; lod = si(rb); offset = off2(rb + 1); break;
         default: log_once("TLDS target " + std::to_string(target)); return;
         }
         Tex& tex = texture(handle, ty, false);
+        const u32 tex_index = u32(&tex - textures.data());
+        // A render target the renderer allocated at the internal resolution scale is bigger than the guest thinks:
+        // its coordinates go from guest to physical texels, floor((c + 0.5) * scale), when the renderer marks this
+        // texture as scaled (PushConstants::scaled_textures bit, scale in viewport_scale[2], [3]). Fragment stage only.
+        if (is_fs && tex_index < 32 && (ty == TextureType::Tex2D || ty == TextureType::Tex2DArray)) {
+            Id bit = op2(spv::OpBitwiseAnd, t_u32, op2(spv::OpShiftRightLogical, t_u32, push_member(4, t_u32), u(tex_index)), u(1));
+            Id on = b.op(spv::OpINotEqual, t_bool, {bit, u(0)});
+            Id vs = push_member(0, t_v4f);
+            for (u32 a = 0; a < 2; a++) {
+                Id s = b.op(spv::OpSelect, t_f32, {on, b.op(spv::OpCompositeExtract, t_f32, {vs, 2 + a}), fc(1.0f)});
+                Id f = fop(spv::OpFMul, t_f32, {fop(spv::OpFAdd, t_f32, {b.op(spv::OpConvertSToF, t_f32, {c[a]}), fc(0.5f)}), s});
+                c[a] = b.op(spv::OpConvertFToS, t_s32, {glsl(t_f32, GLSLstd450Floor, {f})});
+            }
+        }
+        Id coords = c.size() == 1 ? c[0] : b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, u32(c.size())), c);
         Id image = b.op(spv::OpImage, tex.image_t, {b.load(tex.sampled_t, tex.var)});
         std::vector<u32> args{image, coords, u32(spv::ImageOperandsLodMask) | (offset ? u32(spv::ImageOperandsOffsetMask) : 0u),
                               lod ? lod : b.bitcast(t_s32, u(0))};

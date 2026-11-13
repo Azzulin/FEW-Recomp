@@ -61,10 +61,12 @@ struct Resources {
 };
 
 struct PushConstants {
-    float viewport_scale[4];   // x, y scale applied for y-flip / render scaling (renderer-defined use)
+    // [0], [1]: clip-space X squeeze (perspective, orthographic) for non-16:9 targets; [2], [3]: the internal
+    // resolution scale (x, y) of scaled render targets, for texel fetches from them (scaled_textures)
+    float viewport_scale[4];
     u32 base_vertex, base_instance;
     u32 rt_mask;               // enabled render targets
-    u32 pad;
+    u32 scaled_textures;       // fragment stage: bit i = Resources::textures[i] is a scaled render target
     float picture[4];          // Settings > Graphics picture controls: contrast, bloom scale (1 = the game's look)
 };
 
