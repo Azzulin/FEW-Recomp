@@ -5,9 +5,10 @@ Recompilação estática de *Fire Emblem Warriors* (Switch, ARM64) para x86-64 n
 
 ## Comece por aqui
 
-1. [README.md](README.md): o que é, estado, como gerar.
-2. [docs/few.md](docs/few.md): fatos medidos no dump (módulos, hashes, SDK, RomFS, DLC). Fonte de verdade sobre o jogo.
-3. [docs/how-it-works.md](docs/how-it-works.md): arquitetura herdada do HWDER (recompilador, kernel, serviços, GPU).
+1. [docs/handover.md](docs/handover.md): estado, como testar, pendências e armadilhas. Atualize ao terminar.
+2. [README.md](README.md): o que é e como gerar.
+3. [docs/few.md](docs/few.md): fatos medidos no dump (módulos, hashes, SDK, RomFS, DLC, vídeos). Fonte de verdade sobre o jogo.
+4. [docs/how-it-works.md](docs/how-it-works.md): arquitetura herdada do HWDER (recompilador, kernel, serviços, GPU).
 
 ## Decisões tomadas
 

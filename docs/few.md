@@ -57,6 +57,25 @@ nn::settings 2, nn::ec 1, `nv::InitializeGraphics`, `nv::SetGraphicsAllocator`.
 - DLCs: cada uma é um RomFS próprio (`nx/action/model`, `nx/voice/eng` + `jpn`, `nx/sound/bgm`, `common/talkEvent` …).
   O Japanese-Voice Pack traz `nx/voice/jpn` (1,5 GiB) e um BGM próprio.
 
+## Vídeos
+
+`nx/movie/eng/*.mp4` (`tools/movie_info.py`): H.264 High@4.1, 1920×1088, 30 fps, POC tipo 0
+(`log2_max_poc_lsb_minus4` 1), `log2_max_frame_num_minus4` 0, `max_num_ref_frames` 2, quadros B
+(`max_num_reorder_frames` 1), CABAC, predição ponderada (`weighted_pred` 1, `weighted_bipred_idc` 2),
+`num_ref_idx_l0/l1` 2/1, transform 8×8, `chroma_qp_index_offset` −4, **um único IDR por vídeo**.
+O bloco de parâmetros do NVDEC traz `num_ref_idx_*_default_active_minus1` (1 e 0 aqui).
+
+## Execução (medido)
+
+- Entrada extra necessária: `glslc+0x6c3ff4` (`0x1001ac3ff4`), a mesma do HWDE no mesmo `glslc`.
+- O jogo monta as cinco DLCs no boot com `fsp-srv OpenDataStorageByDataId(storage 0, data id = título da DLC)`.
+- Save: `save/0100F15003E64000/<usuário>/system` (496 bytes) logo após "Creating new save data".
+- Batalha do prólogo: 1.000–1.300 draws por quadro, 2 dispatches, 30 fps pedidos pelo jogo.
+- O pós-processamento lê profundidade/G-buffer com `TLDS` (sem ele, a cena inteira vira neblina).
+- Há shaders com `SUST` (escrita em imagem) e `ATOMS`; o efeito deles ainda não foi identificado. Em 2x a
+  composição cobre só o quadrante superior esquerdo, a forma típica de compute com grade em tamanho nativo
+  (diagnóstico provável, não confirmado).
+
 ## Comparação com a versão japonesa v0 (dump descartado)
 
 O primeiro dump era o japonês `0100EAE003A5A000` v0: mesmos 8 módulos da base US, SDK 1.6.0, RomFS só com pastas

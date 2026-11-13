@@ -13,9 +13,10 @@ módulos e quase o mesmo SDK (3.7.0 contra 3.5.1). Detalhes em [docs/few.md](doc
 
 ## Estado
 
-Fase 1: gerar o C do update 1.5.0, compilar e rodar até o primeiro problema de boot. Os extras do HWDER que dependem
-de endereços do Hyrule Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`).
-DLC ainda não é servida ao jogo (`aoc:u` responde "nenhuma").
+Roda nativo no Windows: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo, com as cinco DLCs
+montadas pelo jogo. Ainda sem uma sessão longa de jogo. Os extras do HWDER que dependem de endereços do Hyrule
+Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução fica
+em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
 
 ## Arquivos do jogo
 
@@ -25,7 +26,7 @@ Coloque em `Game Files\` (ignorado pelo git):
 Game Files\
   Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp
   Fire Emblem Warriors [0100F15003E64800][v327680][1.5.0][UPD][US].nsp
-  Fire Emblem Warriors [...][0100F15003E6500x][US][...].nsp      # DLCs (ainda não usadas)
+  Fire Emblem Warriors [...][0100F15003E6500x][US][...].nsp      # DLCs: lidas da mesma pasta
 prod.keys                                                     # na raiz ou em Game Files\
 ```
 

@@ -610,10 +610,10 @@ bool TextureCache::scale_stale(const Image* img) {
            (img->scale != g_res_scale || img->scale_y != g_res_scale_y);
 }
 
-// Internal resolution scaling is held at 1x for Fire Emblem Warriors: its lighting/composition runs partly in
-// compute shaders whose dispatch grid and image coordinates are in guest texels, and some fragment passes derive
-// texel coordinates from gl_FragCoord; over scaled render targets they covered only the top-left part of the
-// screen. The fix (guest-space FragCoord, scaled compute) is pending; HWDER_ALLOW_RES_SCALE=1 lets it be tried.
+// Internal resolution scaling is held at 1x for Fire Emblem Warriors: at 2x its scene composition covered only the
+// top-left quarter of the screen, the shape of passes (likely compute, possibly gl_FragCoord-based fetches) that
+// address scaled render targets in guest texels. The fix (guest-space FragCoord, scaled compute) is pending;
+// HWDER_ALLOW_RES_SCALE=1 lets it be tried.
 static bool res_scale_allowed(float sx, float sy) {
     static const bool allowed = getenv("HWDER_ALLOW_RES_SCALE") && getenv("HWDER_ALLOW_RES_SCALE")[0] == '1';
     if (allowed || (sx == 1.0f && sy == 1.0f)) return true;
