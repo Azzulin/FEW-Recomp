@@ -72,6 +72,11 @@ O bloco de parâmetros do NVDEC traz `num_ref_idx_*_default_active_minus1` (1 e 
 - Save: `save/0100F15003E64000/<usuário>/system` (496 bytes) logo após "Creating new save data".
 - Batalha do prólogo: 1.000–1.300 draws por quadro, 2 dispatches, 30 fps pedidos pelo jogo.
 - O pós-processamento lê profundidade/G-buffer com `TLDS` (sem ele, a cena inteira vira neblina).
+- Batalha: o jogo pede 30 Hz (`limiter` ~32,6 ms por quadro) com a thread da GPU ocupada 6–7 ms por quadro.
+- Primeira sessão com cache frio: compilações síncronas de pipeline de 100–330 ms quando surgem efeitos novos;
+  `skipped_draws` 486 em ~30 s de batalha.
+- Travamento reproduzível na batalha do prólogo (~30–50 s de luta com cache frio), descrito em
+  [handover.md](handover.md#travamento-na-batalha).
 - Há shaders com `SUST` (escrita em imagem) e `ATOMS`; o efeito deles ainda não foi identificado. Em 2x a
   composição cobre só o quadrante superior esquerdo, a forma típica de compute com grade em tamanho nativo
   (diagnóstico provável, não confirmado).

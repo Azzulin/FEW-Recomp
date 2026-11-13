@@ -1,0 +1,19 @@
+# HWDER_INPUT_SCRIPT: from an empty save into the prologue battle, then several minutes of varied fighting.
+6000 120 A every=2000 until=30000
+30000 120 LEFT every=2500 until=100000
+30700 120 A every=2500 until=100000
+# Battle (from ~95 s): tutorials close with B (A pages them), then fight.
+95000 120 B every=4000
+97000 120 A every=4000
+110000 100 Y every=700
+110300 100 X every=2100
+# Warrior special (A) and awakening (ZR) now and then; dodge; switch character (UP / DOWN on the D-pad).
+112000 150 A every=9000
+115000 150 ZR every=17000
+116000 120 B every=5000
+118000 120 UP every=23000
+130000 120 DOWN every=29000
+# Walk around: forward with alternating sideways drift, and turn the camera.
+110000 3000 - ly=22000 lx=14000 every=6000
+113000 3000 - ly=22000 lx=-14000 every=6000
+111000 1500 - rx=18000 every=8000

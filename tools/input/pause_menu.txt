@@ -1,0 +1,6 @@
+# HWDER_INPUT_SCRIPT: into the prologue battle, close the first tutorial, then open the pause menu (+).
+6000 120 A every=2000 until=30000
+30000 120 LEFT every=2500 until=100000
+30700 120 A every=2500 until=100000
+95000 120 B every=3000 until=104000
+106000 150 PLUS
