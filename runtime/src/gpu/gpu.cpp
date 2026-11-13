@@ -6,6 +6,7 @@
 #include "host/sampler.h"
 
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -988,15 +989,22 @@ static void execute_inner(Channel* ch, Submission& s) {
         }
     }
     std::vector<u32> buf;
-    for (const GpEntry& e : s.entries) {
+    for (size_t ei = 0; ei < s.entries.size(); ei++) {
+        const GpEntry& e = s.entries[ei];
         u32 n = e.words();
         if (!n) continue;  // control entry
-        u64 va = e.address();
-        const u32* words = (const u32*)ch->mm->translate(va);
-        if (!words || ch->mm->contiguous_size(va, (u64)n * 4) < (u64)n * 4) {
-            buf.resize(n);
-            ch->mm->read(va, buf.data(), (u64)n * 4);
-            words = buf.data();
+        const u32 snap = ei < s.snap_off.size() ? s.snap_off[ei] : ~0u;
+        const u32* words = nullptr;
+        if (snap != ~0u) {
+            words = s.snapshot.data() + snap;  // copied at submit (channel_submit)
+        } else {
+            u64 va = e.address();
+            words = (const u32*)ch->mm->translate(va);
+            if (!words || ch->mm->contiguous_size(va, (u64)n * 4) < (u64)n * 4) {
+                buf.resize(n);
+                ch->mm->read(va, buf.data(), (u64)n * 4);
+                words = buf.data();
+            }
         }
         OpTimer t("pushbuffer entry", n, 60.0);
         process_pushbuffer(ch, words, n);
@@ -1052,6 +1060,27 @@ Channel* create_channel(MemoryManager* mm) {
 constexpr size_t kMaxQueuedSubmissions = 24;
 
 void channel_submit(Channel* ch, Submission&& s) {
+    // Snapshot the pushbuffers now (see Submission::snapshot). Entries flagged no_prefetch stay live.
+    static const bool live = getenv("HWDER_GPFIFO_LIVE") != nullptr;  // old behaviour, for A/B tests
+    if (!live) {
+        size_t total = 0;
+        for (const GpEntry& e : s.entries)
+            if (!e.no_prefetch()) total += e.words();
+        s.snapshot.resize(total);
+        s.snap_off.assign(s.entries.size(), ~0u);
+        u32 at = 0;
+        for (size_t i = 0; i < s.entries.size(); i++) {
+            const GpEntry& e = s.entries[i];
+            u32 n = e.words();
+            if (!n || e.no_prefetch()) continue;
+            const u64 va = e.address(), bytes = (u64)n * 4;
+            const void* src = ch->mm->translate(va);
+            if (src && ch->mm->contiguous_size(va, bytes) >= bytes) memcpy(s.snapshot.data() + at, src, bytes);
+            else ch->mm->read(va, s.snapshot.data() + at, bytes);
+            s.snap_off[i] = at;
+            at += n;
+        }
+    }
     {
         std::unique_lock<std::mutex> l(g_q.m);
         if (g_q.queue.size() >= kMaxQueuedSubmissions) {

@@ -20,6 +20,12 @@ struct GpEntry {
 
 struct Submission {
     std::vector<GpEntry> entries;
+    // The pushbuffer words of each entry, copied when the guest submits (channel_submit), as the GPFIFO prefetch does
+    // on hardware: the guest may reuse its command memory once it believes the GPU fetched it, and the GPU thread can
+    // run far behind (a pipeline compile). snap_off[i] indexes `snapshot` for entry i; ~0u = read at execution
+    // (no_prefetch entries, or memory that could not be read).
+    std::vector<u32> snapshot;
+    std::vector<u32> snap_off;
     bool wait = false, increment = false;
     Fence wait_fence{};
     u32 syncpoint = 0;
