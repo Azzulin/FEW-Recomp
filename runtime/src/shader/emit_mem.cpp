@@ -97,6 +97,15 @@ void Translator::emit_mem(Inst in, Op op) {
         case 37: case 38: case 39:
             if (stage == Stage::Compute) v = builtin_v3(workgroup_id, spv::BuiltInWorkgroupId, sr - 37);
             break;
+        case 56: case 57: case 58: case 59: case 60: {
+            // SR_EQMASK, LTMASK, LEMASK, GTMASK, GEMASK: lanes of the 32-wide warp relative to this one. Warp-aggregated
+            // atomics (one lane adds the vote's popcount, each lane takes popc(vote & LTMASK) as its slot) need them.
+            Id bit = op2(spv::OpShiftLeftLogical, t_u32, u(1), lane_id());
+            Id lt = op2(spv::OpISub, t_u32, bit, u(1));
+            Id le = op2(spv::OpBitwiseOr, t_u32, lt, bit);
+            v = sr == 56 ? bit : sr == 57 ? lt : sr == 58 ? le : sr == 59 ? b.op(spv::OpNot, t_u32, {le}) : b.op(spv::OpNot, t_u32, {lt});
+            break;
+        }
         default:
             log_once("S2R SR " + std::to_string(sr) + " reads 0");
         }
@@ -146,13 +155,8 @@ void Translator::emit_mem(Inst in, Op op) {
             if (op == Op::LDS) setR(d, u(0));
             return;
         }
-        u32 words = std::max<u32>(1, std::min<u32>(env.shared_memory_size(), 0xC000) / 4);
-        if (!shared_mem) {
-            shared_mem = b.id();
-            b.put(b.globals, spv::OpVariable,
-                  {b.t_ptr(spv::StorageClassWorkgroup, b.t_array(t_u32, words)), shared_mem,
-                   u32(spv::StorageClassWorkgroup)});
-        }
+        u32 words = 0;
+        shared_words(words);
         u32 size = in.bits(48, 3);
         Id addr = iadd(R(in.bits(8, 8)), u(u32(in.sbits(20, 24))));
         Id word = glsl(t_u32, GLSLstd450UMin, {op2(spv::OpShiftRightLogical, t_u32, addr, u(2)), u(words - 1)});
@@ -171,13 +175,250 @@ void Translator::emit_mem(Inst in, Op op) {
             b.op0(spv::OpControlBarrier, {u(spv::ScopeWorkgroup), u(spv::ScopeWorkgroup),
                                           u(spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask)});
         return;
-    case Op::LD: case Op::LDG: case Op::ATOM: case Op::ATOMS: case Op::ATOM_cas: case Op::ATOMS_cas:
+    case Op::LDG: case Op::STG: case Op::ATOM: case Op::RED:
+        emit_global(in, op);
+        return;
+    case Op::ATOMS:
+        emit_shared_atomic(in, op);
+        return;
+    case Op::LD: case Op::ATOM_cas: case Op::ATOMS_cas:
         unsupported(op);
         setR(d, u(0));
         return;
     default:
         unsupported(op);
     }
+}
+
+Id Translator::shared_words(u32& words) {
+    words = std::max<u32>(1, std::min<u32>(env.shared_memory_size(), 0xC000) / 4);
+    if (!shared_mem) {
+        shared_mem = b.id();
+        b.put(b.globals, spv::OpVariable,
+              {b.t_ptr(spv::StorageClassWorkgroup, b.t_array(t_u32, words)), shared_mem, u32(spv::StorageClassWorkgroup)});
+    }
+    return shared_mem;
+}
+
+// --------------------------------------------------------------------------------------- global memory
+
+// c0 offset of storage buffer descriptor 0, per stage. Compute is measured (FEW's dumps: the culling shaders read
+// c[0][0x310..] for their buffers); the graphics values follow NVN's 0x100-per-stage layout and are not verified.
+static u32 gmem_desc_base(Stage s) {
+    switch (s) {
+    case Stage::Compute: return 0x310;
+    case Stage::VertexA: case Stage::VertexB: return 0x110;
+    case Stage::TessControl: return 0x210;
+    case Stage::TessEval: return 0x310;
+    case Stage::Geometry: return 0x410;
+    case Stage::Fragment: return 0x510;
+    }
+    return 0x310;
+}
+
+void Translator::scan_global_memory() {
+    const u32 base = gmem_desc_base(stage);
+    std::set<u32> slots, seen;
+    for (const Block& blk : blocks)
+        for (u32 pc : blk.insts) {
+            if (!seen.insert(pc).second) continue;
+            const Inst in{env.read_instruction(pc)};
+            const Op op = decode(in.raw);
+            if (op == Op::LDG) gmem_used = true;
+            if (op == Op::STG || op == Op::ATOM || op == Op::ATOM_cas || op == Op::RED) gmem_used = gmem_written = true;
+            // Descriptor reads: the address and size words of c[0][base + 16 * slot].
+            u32 index = ~0u, offset = 0;
+            const Form f = form_of(op);
+            if (f == Form::C || f == Form::RC || f == Form::CR) index = in.bits(34, 5), offset = in.bits(20, 14) * 4;
+            else if (op == Op::LDC && in.bits(8, 8) == 255) index = in.bits(36, 5), offset = u32(in.sbits(20, 16)) & 0xFFFF;
+            if (index == 0 && offset >= base && offset < base + 0x100) slots.insert((offset - base) / 16);
+        }
+    if (!gmem_used) return;
+    for (u32 s : slots) gmem.push_back({base + s * 16});
+    if (gmem.empty()) log_once("global memory without a storage buffer descriptor read (accesses read 0)");
+    if (stage != Stage::Compute) log_once("global memory in a graphics stage (descriptor base unverified)");
+}
+
+// NVN's code builds the high word of a buffer address from the descriptor right before the access, in the same
+// block: MOV Rh, c[0][desc+4] or IADD.X Rh, RZ, c[0][desc+4] (carry from the low word). When the last writer of Ra+1
+// there is such an unpredicated read, the access can only be in that buffer; otherwise every descriptor is tested.
+// Each test costs a dozen instructions per access, which made the culling shaders compile for seconds.
+std::vector<Translator::Gmem*> Translator::gmem_candidates(u32 ra) {
+    std::vector<Gmem*> all;
+    for (Gmem& g : gmem) all.push_back(&g);
+    if (gmem.size() < 2 || !cur_block || ra >= 254) return all;
+    const u32 hi_reg = ra + 1;
+    for (size_t k = cur_index; k-- > 0;) {
+        const Inst in{env.read_instruction(cur_block->insts[k])};
+        const Op op = decode(in.raw);
+        const std::string name = op_name(op);
+        // No GPR destination in bits 0-7: stores, predicate results, control flow, barriers.
+        switch (op) {
+        case Op::STG: case Op::STS: case Op::STL: case Op::ST: case Op::RED: case Op::AST: case Op::SUST: case Op::SURED:
+        case Op::BRA: case Op::BRX: case Op::SSY: case Op::PBK: case Op::PCNT: case Op::SYNC: case Op::BRK: case Op::CONT:
+        case Op::EXIT: case Op::KIL: case Op::BAR: case Op::MEMBAR: case Op::DEPBAR: case Op::NOP: case Op::CAL: case Op::RET:
+        case Op::JMP: case Op::JCAL: case Op::PEXIT: case Op::PRET: case Op::CCTL: case Op::CCTLL: case Op::CCTLT: case Op::OUT_r:
+        case Op::OUT_c: case Op::OUT_i: case Op::R2P_c: case Op::R2P_i: case Op::R2P_r:
+            continue;
+        default:
+            break;
+        }
+        if (name.find("SETP") != std::string::npos) continue;
+        if (in.bits(0, 8) != hi_reg) continue;
+        if (in.bits(16, 3) != 7 || in.bit(19)) return all;  // predicated writer: may not have run
+        const Form f = form_of(op);
+        if ((f == Form::C || f == Form::RC || f == Form::CR) && in.bits(34, 5) == 0) {
+            const u32 off = in.bits(20, 14) * 4;
+            for (Gmem& g : gmem)
+                if (g.cbuf_offset + 4 == off) return {&g};
+        }
+        return all;
+    }
+    return all;
+}
+
+Id Translator::gmem_var(Gmem& g) {
+    if (!g.var) {
+        if (!gmem_struct) {
+            Id arr = b.t_runtime_array_fresh(t_u32);
+            b.decorate(arr, spv::DecorationArrayStride, {4});
+            gmem_struct = b.t_struct_fresh({arr});
+            b.decorate(gmem_struct, spv::DecorationBlock);
+            b.member_decorate(gmem_struct, 0, spv::DecorationOffset, {0});
+            gmem_ptr_u32 = b.t_ptr(spv::StorageClassStorageBuffer, t_u32);
+        }
+        g.var = b.id();
+        b.put(b.globals, spv::OpVariable,
+              {b.t_ptr(spv::StorageClassStorageBuffer, gmem_struct), g.var, u32(spv::StorageClassStorageBuffer)});
+    }
+    return g.var;
+}
+
+// Ra (+ Ra+1 as the high word when .E) plus a signed immediate, as a 64-bit lo/hi pair.
+void Translator::gmem_address(u32 ra, s32 imm, bool ext, Id& lo, Id& hi) {
+    if (!t_u32_pair) t_u32_pair = b.type(spv::OpTypeStruct, {t_u32, t_u32});
+    Id a_lo = R(ra), a_hi = ext ? R(ra + 1) : u(0);
+    Id sum = b.op(spv::OpIAddCarry, t_u32_pair, {a_lo, u(u32(imm))});
+    lo = b.op(spv::OpCompositeExtract, t_u32, {sum, 0});
+    Id carry = b.op(spv::OpCompositeExtract, t_u32, {sum, 1});
+    hi = iadd(iadd(a_hi, carry), u(imm < 0 ? 0xFFFFFFFFu : 0u));
+}
+
+Id Translator::gmem_match(Gmem& g, Id lo, Id hi, u32 words, Id& index) {
+    Id d_lo = cbuf_load(0, g.cbuf_offset), d_hi = cbuf_load(0, g.cbuf_offset + 4), d_size = cbuf_load(0, g.cbuf_offset + 8);
+    Id diff = b.op(spv::OpISubBorrow, t_u32_pair, {lo, d_lo});
+    Id off = b.op(spv::OpCompositeExtract, t_u32, {diff, 0});
+    Id borrow = b.op(spv::OpCompositeExtract, t_u32, {diff, 1});
+    Id hdiff = op2(spv::OpISub, t_u32, op2(spv::OpISub, t_u32, hi, d_hi), borrow);
+    index = op2(spv::OpShiftRightLogical, t_u32, off, u(2));
+    Id len = b.op(spv::OpArrayLength, t_u32, {gmem_var(g), 0});
+    Id ok = op2(spv::OpIEqual, t_bool, hdiff, u(0));
+    ok = land(ok, op2(spv::OpULessThan, t_bool, off, d_size));
+    ok = land(ok, op2(spv::OpULessThanEqual, t_bool, iadd(index, u(words)), len));  // the bound buffer may be shorter
+    return ok;
+}
+
+Id Translator::atomic_op(u32 aop, bool is_signed, Id ptr, Id value, spv::Scope scope) {
+    spv::Op o;
+    switch (aop) {
+    case 0: o = spv::OpAtomicIAdd; break;
+    case 1: o = is_signed ? spv::OpAtomicSMin : spv::OpAtomicUMin; break;
+    case 2: o = is_signed ? spv::OpAtomicSMax : spv::OpAtomicUMax; break;
+    case 5: o = spv::OpAtomicAnd; break;
+    case 6: o = spv::OpAtomicOr; break;
+    case 7: o = spv::OpAtomicXor; break;
+    case 8: o = spv::OpAtomicExchange; break;
+    default: return 0;  // 3 INC / 4 DEC (wrapping), CAS: not yet
+    }
+    return b.op(o, t_u32, {ptr, u(u32(scope)), u(0), value});
+}
+
+void Translator::emit_global(Inst in, Op op) {
+    if (!t_u32_pair) t_u32_pair = b.type(spv::OpTypeStruct, {t_u32, t_u32});
+    auto word_ptr = [&](Gmem& g, Id index) {
+        return b.op(spv::OpAccessChain, gmem_ptr_u32, {gmem_var(g), u(0), index});
+    };
+    if (op == Op::LDG || op == Op::STG) {
+        // d 0-7, address Ra 8-15, signed offset 20-43, .E 45, size 48-50 (U8 S8 U16 S16 32 64 128 128)
+        const u32 d = in.bits(0, 8), ra = in.bits(8, 8), size = in.bits(48, 3);
+        const u32 n = size == 5 ? 2 : size >= 6 ? 4 : 1;
+        Id lo, hi;
+        gmem_address(ra, in.sbits(20, 24), in.bit(45), lo, hi);
+        const Id shift = op2(spv::OpIMul, t_u32, op2(spv::OpBitwiseAnd, t_u32, lo, u(3)), u(8));
+        if (op == Op::LDG) {
+            std::vector<Id> v(n, u(0));
+            for (Gmem* gp : gmem_candidates(ra)) {
+                Gmem& g = *gp;
+                Id index;
+                Id ok = gmem_match(g, lo, hi, n, index);
+                Id at = select(t_u32, ok, index, u(0));  // buffers hold at least 4 words
+                for (u32 e = 0; e < n; e++) {
+                    Id val = b.load(t_u32, word_ptr(g, e ? iadd(at, u(e)) : at));
+                    v[e] = select(t_u32, ok, val, v[e]);
+                }
+            }
+            if (size < 4) v[0] = bfe(v[0], shift, u(size < 2 ? 8 : 16), size & 1);
+            for (u32 e = 0; e < n; e++) setR(d + e, v[e]);
+        } else {
+            std::vector<Id> v(n);
+            for (u32 e = 0; e < n; e++) v[e] = R(d + e);
+            for (Gmem* gp : gmem_candidates(ra)) {
+                Gmem& g = *gp;
+                Id index;
+                Id ok = gmem_match(g, lo, hi, n, index);
+                if_then(ok, [&] {
+                    for (u32 e = 0; e < n; e++) {
+                        Id p = word_ptr(g, e ? iadd(index, u(e)) : index);
+                        if (size < 4) {
+                            Id old = b.load(t_u32, p);
+                            b.store(p, b.op(spv::OpBitFieldInsert, t_u32, {old, v[0], shift, u(size < 2 ? 8 : 16)}));
+                        } else {
+                            b.store(p, v[e]);
+                        }
+                    }
+                });
+            }
+        }
+        return;
+    }
+    // ATOM: d 0-7, address Ra 8-15, value Rb 20-27, signed offset 28-47, .E 48, type 49-51, op 52-55.
+    // RED:  value 0-7, address Ra 8-15, type 20-22, op 23-25, signed offset 28-47, .E 48 (no result).
+    u32 d = 255, ra = in.bits(8, 8), rb, type, aop;
+    if (op == Op::ATOM) d = in.bits(0, 8), rb = in.bits(20, 8), type = in.bits(49, 3), aop = in.bits(52, 4);
+    else rb = in.bits(0, 8), type = in.bits(20, 3), aop = in.bits(23, 3);
+    if (type > 1 || !(aop <= 2 || (aop >= 5 && aop <= 8))) {
+        log_once(std::string(op_name(op)) + " op " + std::to_string(aop) + " type " + std::to_string(type) + " unsupported (no-op)");
+        setR(d, u(0));
+        return;
+    }
+    Id lo, hi;
+    gmem_address(ra, in.sbits(28, 20), in.bit(48), lo, hi);
+    Id value = R(rb);
+    Id result = b.local_var(ptr_fn_u32, u(0));
+    b.store(result, u(0));  // no descriptor matched: 0 (the variable lives across dispatcher iterations)
+    for (Gmem* gp : gmem_candidates(ra)) {
+        Gmem& g = *gp;
+        Id index;
+        Id ok = gmem_match(g, lo, hi, 1, index);
+        if_then(ok, [&] { b.store(result, atomic_op(aop, type == 1, word_ptr(g, index), value, spv::ScopeDevice)); });
+    }
+    setR(d, b.load(t_u32, result));
+}
+
+// ATOMS: d 0-7, address Ra 8-15, value Rb 20-27, type 28-29, offset 30-51 (in words), op 52-55.
+void Translator::emit_shared_atomic(Inst in, Op op) {
+    const u32 d = in.bits(0, 8), type = in.bits(28, 2), aop = in.bits(52, 4);
+    if (stage != Stage::Compute || type > 1 || !(aop <= 2 || (aop >= 5 && aop <= 8))) {
+        log_once(std::string(op_name(op)) + " op " + std::to_string(aop) + " type " + std::to_string(type) + " unsupported (no-op)");
+        setR(d, u(0));
+        return;
+    }
+    u32 words = 0;
+    Id arr = shared_words(words);
+    Id addr = iadd(R(in.bits(8, 8)), u(in.bits(30, 22) * 4));
+    Id w = glsl(t_u32, GLSLstd450UMin, {op2(spv::OpShiftRightLogical, t_u32, addr, u(2)), u(words - 1)});
+    Id p = b.op(spv::OpAccessChain, b.t_ptr(spv::StorageClassWorkgroup, t_u32), {arr, w});
+    setR(d, atomic_op(aop, type == 1, p, R(in.bits(20, 8)), spv::ScopeWorkgroup));
 }
 
 Id Translator::ipa(Inst in) {

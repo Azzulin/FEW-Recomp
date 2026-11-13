@@ -67,6 +67,8 @@ def main():
     ap.add_argument("--generated-dir", help="user-local generated C directory")
     ap.add_argument("--managed-toolchain", type=Path, help="verified private LLVM-MinGW toolset directory")
     ap.add_argument("--managed-temp-dir", type=Path, help="owned private compiler/test temporary directory")
+    ap.add_argument("--define", action="append", default=[], metavar="NAME=VALUE",
+                    help="extra CMake cache value (e.g. HW_MARCH=znver2 for the Steam Deck); repeatable")
     modes = ap.add_mutually_exclusive_group()
     modes.add_argument("--synthetic-tests", action="store_true", help="configure public tests without game inputs")
     modes.add_argument("--host-tests", action="store_true", help="configure only portable host contract tests")
@@ -146,6 +148,7 @@ def build(a):
         # CMake 3.31 passes -Wl,--dependency-file to the link when it finds an ld.lld on PATH (Arch with lld
         # installed), but Zig's cc driver rejects it ("unsupported linker arg"). Ninja tracks link inputs anyway.
         args += ["-DCMAKE_LINK_DEPENDS_USE_LINKER=OFF"]
+    args += [f"-D{d}" for d in a.define]
     result = subprocess.run(args, env=env)
     if result.returncode:
         return result.returncode

@@ -76,6 +76,9 @@ public:
     virtual void audit_cpu_write(u64 cpu_addr, u64 size) = 0;
     // Guest CPU / DMA is about to read this range: write back host-rendered data.
     virtual void flush_region(u64 cpu_addr, u64 size) = 0;
+    // The GPU thread is about to read this range as commands (a GPFIFO entry): wait until what shaders wrote there
+    // (global memory, e.g. indirect draw arguments filled by a compute shader) is back in guest memory.
+    virtual void sync_gpu_writes(u64 cpu_addr, u64 size) {}
     // Whether the renderer holds GPU-modified data for this range (lets DMA copy GPU-side).
     virtual bool is_gpu_modified(u64 cpu_addr, u64 size) = 0;
 

@@ -464,6 +464,12 @@ void Translator::finish_program() {
         b.decorate(cb.var, spv::DecorationBinding, {binding++});
         prog.resources.const_buffers.push_back({index, std::max<u32>(cb.size, 16)});
     }
+    for (auto& g : gmem) {  // storage buffers: after the constant buffers (shader.h binding model)
+        Id var = gmem_var(g);
+        b.decorate(var, spv::DecorationDescriptorSet, {set});
+        b.decorate(var, spv::DecorationBinding, {binding++});
+        prog.resources.storage_buffers.push_back({0, g.cbuf_offset, gmem_written});
+    }
     for (auto& t : textures) {
         b.decorate(t.var, spv::DecorationDescriptorSet, {set});
         b.decorate(t.var, spv::DecorationBinding, {binding++});

@@ -40,6 +40,11 @@ $env:HWDER_NO_PRELAUNCH = '1'; $env:HWDER_OFFSCREEN = '1'; $env:HWDER_MUTE = '1'
 if ($Script) { $env:HWDER_INPUT_SCRIPT = (Resolve-Path -LiteralPath $Script).ProviderPath } else { Remove-Item Env:HWDER_INPUT_SCRIPT -ErrorAction SilentlyContinue }
 foreach ($kv in $EnvList) { $k, $v = $kv -split '=', 2; Set-Item -Path "Env:$k" -Value $v }
 
+# Keep Windows from sleeping on idle while the test runs (a 2026-11-13 run froze for 18 min in standby). Released at
+# the end; closing the lid still suspends.
+Add-Type -Namespace Few -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
+[void][Few.Power]::SetThreadExecutionState([uint32]2147483651)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+
 $p = Start-Process -FilePath $exe -WorkingDirectory $run -PassThru
 $cap = Join-Path $PSScriptRoot 'screenshot.ps1'
 foreach ($s in ($ShotList | Sort-Object)) {
@@ -51,4 +56,5 @@ foreach ($s in ($ShotList | Sort-Object)) {
 $left = $Seconds - ((Get-Date) - $p.StartTime).TotalSeconds
 if ($left -gt 0 -and -not $p.HasExited) { [void]$p.WaitForExit([int]($left * 1000)) }
 if ($p.HasExited) { Write-Output "exited by itself, code $($p.ExitCode)" } else { Stop-Process -Id $p.Id -Force; Write-Output "stopped after $Seconds s" }
+[void][Few.Power]::SetThreadExecutionState([uint32]2147483648)  # ES_CONTINUOUS alone: back to normal
 Write-Output "log: $log"

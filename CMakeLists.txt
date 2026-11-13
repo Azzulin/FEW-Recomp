@@ -102,6 +102,12 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(
         message(FATAL_ERROR "Generated game code requires Clang (musttail and GNU builtins)")
     endif()
     set(HW_ARCH_FLAGS -mavx2 -mfma -mf16c -maes -mpclmul -msse4.2)
+    # A build for one CPU: HW_MARCH=znver2 is the Steam Deck (Zen 2). Schedules and enables what that CPU has; the
+    # binary then needs it.
+    set(HW_MARCH "" CACHE STRING "Linux: -march/-mtune target (e.g. znver2 for the Steam Deck); empty = generic AVX2")
+    if(HW_MARCH)
+        set(HW_ARCH_FLAGS -march=${HW_MARCH} -mtune=${HW_MARCH})
+    endif()
     set(HW_GAME_FLAGS -O2 -g)
 else()
     message(FATAL_ERROR "Supported toolchains: Windows clang-cl; experimental Linux x86-64 Clang")

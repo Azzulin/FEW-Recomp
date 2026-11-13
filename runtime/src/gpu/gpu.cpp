@@ -318,6 +318,21 @@ static void i2m_data(Channel* ch, EngineI2M& e, u32 value) {
 }
 
 // ------------------------------------------------------------------ semaphores / reports
+// Command buffer flushes by what asked for them (logged with the GPU thread's per-frame figures).
+enum FlushSrc {
+    kFlReportRelease, kFlReportAcquire, kFlReportCounter, kFlSyncInfo, kFlWfi3d, kFlComputeSyncpt, kFlDmaSemaphore,
+    kFlSemRelease, kFlSemAcquire, kFlSyncptIncr, kFlSyncptWait, kFlHostWfi, kFlEndOfSubmission, kFlSrcCount
+};
+static const char* const kFlushSrcNames[kFlSrcCount] = {
+    "report release", "report acquire", "report counter", "3d sync", "3d wfi", "compute syncpt", "dma semaphore",
+    "semaphore release", "semaphore acquire", "syncpt incr", "syncpt wait", "host wfi", "end of submission"};
+static u64 g_flush_src[kFlSrcCount];
+static u64 g_dispatches;
+static void flush_from(FlushSrc s) {
+    g_flush_src[s]++;
+    renderer()->flush_commands();
+}
+
 static void write_report(Channel* ch, u64 addr, u32 payload, bool short_form) {
     if (short_form) {
         ch->mm->write(addr, &payload, 4);
@@ -340,7 +355,7 @@ static void report_semaphore(Engine3D& e, u32 query) {
     u32 counter = (query >> 23) & 0x1F;
     switch (op) {
     case 0: {  // release
-        renderer()->flush_commands();
+        flush_from(kFlReportRelease);
         if (short_form) {
             renderer()->on_gpu_idle([ch, addr, payload] { write_report(ch, addr, payload, true); });
         } else {
@@ -349,7 +364,7 @@ static void report_semaphore(Engine3D& e, u32 query) {
         break;
     }
     case 1: {  // acquire: wait until memory == payload
-        renderer()->flush_commands();
+        flush_from(kFlReportAcquire);
         for (int spin = 0;; spin++) {
             u32 v = 0;
             ch->mm->read(addr, &v, 4);
@@ -378,7 +393,7 @@ static void report_semaphore(Engine3D& e, u32 query) {
         default: value = 0; break;
         }
         if (counter == 0) value = payload;
-        renderer()->flush_commands();
+        flush_from(kFlReportCounter);
         renderer()->on_gpu_idle([ch, addr, value, short_form] {
             if (short_form) {
                 u32 v = (u32)value;
@@ -550,13 +565,19 @@ static void method_3d(Engine3D& e, u32 method, u32 value) {
         u32 id = value & 0xFFFF;
         bool cond = (value >> 20) & 1;  // 0: increment when all previous work is done
         (void)cond;
-        renderer()->flush_commands();
+        flush_from(kFlSyncInfo);
         renderer()->on_gpu_idle([id] { nv::syncpoint_increment(id); });
         break;
     }
-    case WaitForIdle:
-        renderer()->flush_commands();
+    case WaitForIdle: {
+        // Orders GPU work only; the host queue already does (every dispatch is fenced by full barriers, every pass
+        // ends with one) and what the CPU waits for flushes by itself (semaphores, syncpoints, reads). NVN emits one
+        // between compute launches: ~1000 per battle frame, each a queue submit when this flushed.
+        static const bool flush = getenv("HWDER_WFI_FLUSH") != nullptr;  // the old behaviour, for A/B tests
+        if (flush) flush_from(kFlWfi3d);
+        else g_flush_src[kFlWfi3d]++;
         break;
+    }
     case ConstBufferData + 0: case ConstBufferData + 1: case ConstBufferData + 2: case ConstBufferData + 3:
     case ConstBufferData + 4: case ConstBufferData + 5: case ConstBufferData + 6: case ConstBufferData + 7:
     case ConstBufferData + 8: case ConstBufferData + 9: case ConstBufferData + 10: case ConstBufferData + 11:
@@ -670,13 +691,14 @@ static void method_compute(Channel* ch, u32 method, u32 value) {
     case 0xAF: {  // LAUNCH: QMD at LAUNCH_DESC_LOC << 8
         u64 qmd = (u64)e.regs[0xAD] << 8;
         if (trace_enabled()) hw_log("compute: launch qmd 0x%llx", (unsigned long long)qmd);
+        g_dispatches++;
         OpTimer t("dispatch", qmd);
         renderer()->dispatch(e.regs, qmd);
         break;
     }
     case 0xB2: {  // sync point increment
         u32 id = value & 0xFFFF;
-        renderer()->flush_commands();
+        flush_from(kFlComputeSyncpt);
         renderer()->on_gpu_idle([id] { nv::syncpoint_increment(id); });
         break;
     }
@@ -808,7 +830,7 @@ static void method_dma(Channel* ch, u32 method, u32 value) {
         if (sem) {
             u64 a = ((u64)e.regs[0x90] << 32) | e.regs[0x91];
             u32 payload = e.regs[0x92];
-            renderer()->flush_commands();
+            flush_from(kFlDmaSemaphore);
             renderer()->on_gpu_idle([ch, a, payload, sem] { write_report(ch, a, payload, sem == 1); });
         }
     }
@@ -869,10 +891,10 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
             if (op == 2) {  // release
                 bool short_form = (value >> 12) & 1;
                 u32 payload = ch->sem_payload;
-                renderer()->flush_commands();
+                flush_from(kFlSemRelease);
                 renderer()->on_gpu_idle([ch, a, payload, short_form] { write_report(ch, a, payload, short_form); });
             } else if (op == 1 || op == 4 || op == 8) {  // acquire (equal / >= / and)
-                renderer()->flush_commands();
+                flush_from(kFlSemAcquire);
                 GpuWaitTimer wt(kGpuWaitSem);
                 hang::Where hw("semaphore acquire", a);
                 u64 t0 = host::ticks_ms();
@@ -903,10 +925,10 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
         case 0x1D: {  // SYNCPOINTB: bit 0 operation (0 wait, 1 incr), bits 8-19 index
             u32 id = (value >> 8) & 0xFFF;
             if (value & 1) {
-                renderer()->flush_commands();
+                flush_from(kFlSyncptIncr);
                 renderer()->on_gpu_idle([id] { nv::syncpoint_increment(id); });
             } else {
-                renderer()->flush_commands();
+                flush_from(kFlSyncptWait);
                 GpuWaitTimer wt(kGpuWaitSyncpt);
                 hang::Where hw("pushbuffer syncpoint wait", ((u64)id << 32) | ch->syncpt_payload);
                 if (!nv::syncpoint_wait(id, ch->syncpt_payload, 100 * 1000000)) {
@@ -918,7 +940,7 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
             break;
         }
         case 0x1E:  // WFI
-            renderer()->flush_commands();
+            flush_from(kFlHostWfi);
             break;
         default:
             break;
@@ -1031,6 +1053,16 @@ double gpu_busy_ms_reset() {
            "semaphore %.2f ms (%.1f)", g_wait_ms[kGpuWaitFence] / 120, g_wait_n[kGpuWaitFence] / 120.0, g_wait_ms[kGpuWaitSyncpt] / 120,
            g_wait_n[kGpuWaitSyncpt] / 120.0, g_wait_ms[kGpuWaitSem] / 120, g_wait_n[kGpuWaitSem] / 120.0);
     for (int k = 0; k < kGpuWaitKinds; k++) g_wait_ms[k] = 0, g_wait_n[k] = 0;
+    {
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf), "gpu: per frame: %.1f dispatches; flushes by source:", g_dispatches / 120.0);
+        for (int k = 0; k < kFlSrcCount; k++)
+            if (g_flush_src[k] && n < (int)sizeof(buf) - 40)
+                n += snprintf(buf + n, sizeof(buf) - n, " %s %.1f,", kFlushSrcNames[k], g_flush_src[k] / 120.0);
+        hw_log("%s", buf);
+        for (auto& c : g_flush_src) c = 0;
+        g_dispatches = 0;
+    }
     return v;
 }
 static void execute_inner(Channel* ch, Submission& s);
@@ -1083,6 +1115,8 @@ static void execute_inner(Channel* ch, Submission& s) {
         if (!n) continue;  // control entry
         u64 va = e.address();
         const u32* words = (const u32*)ch->mm->translate(va);
+        // An entry may point at memory a shader wrote earlier in the stream (NVN's indirect draw arguments).
+        if (words) renderer()->sync_gpu_writes((u64)words, (u64)n * 4);
         if (!words || ch->mm->contiguous_size(va, (u64)n * 4) < (u64)n * 4) {
             buf.resize(n);
             ch->mm->read(va, buf.data(), (u64)n * 4);
@@ -1102,7 +1136,7 @@ static void execute_inner(Channel* ch, Submission& s) {
     }
     {
         hang::Where hw("end of submission flush");
-        renderer()->flush_commands();
+        flush_from(kFlEndOfSubmission);
     }
     if (s.increment) {
         u32 id = s.syncpoint, count = s.increment_count;

@@ -372,6 +372,14 @@ void wait_serial(u64 serial) {
     }
 }
 
+void wait_completed(u64 serial) {
+    if (g_s.completed >= serial) return;
+    SlowTimer timer("wait_completed", 30.0);
+    hang::Where hw("vk: waiting for the waiter thread to retire serial", serial);
+    std::unique_lock<std::mutex> l(g_s.m);
+    g_s.cv.wait(l, [serial] { return g_s.completed >= serial; });
+}
+
 void waiter_thread() {
     host::name_thread(L"HWDER vk waiter");
     hang::set_thread(hang::kWaiter, "retiring");

@@ -1235,8 +1235,13 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
         default: return shader::TextureType::Tex2D;
         }
     };
-    u64 h = shader::hash_program(env, shader::Stage::Compute);
-    u64 key = hash_bytes(env.lsize, sizeof(env.lsize), h ^ env.smem);
+    ComputeKeyCache& kc = compute_keys_[hash_bytes(env.lsize, sizeof(env.lsize), code_va ^ ((u64)env.smem << 40))];
+    if (kc.frame != g_s.present_count) {
+        u64 h = shader::hash_program(env, shader::Stage::Compute);
+        kc.key = hash_bytes(env.lsize, sizeof(env.lsize), h ^ env.smem);
+        kc.frame = g_s.present_count;
+    }
+    const u64 key = kc.key;
     ComputeProgram* cp;
     auto it = compute_.find(key);
     if (it != compute_.end()) {

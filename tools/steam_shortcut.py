@@ -25,8 +25,12 @@ import time
 import urllib.error
 import urllib.request
 
-STEAM_NAME = "Hyrule Warriors: Definitive Edition"
-LAUNCHER = "hwder-steam.sh"
+try:
+    import game_profile  # tools/game_profile.py: the game's identity in one place
+    STEAM_NAME = game_profile.NAME
+except ImportError:
+    STEAM_NAME = "Fire Emblem Warriors"
+LAUNCHER = "few-steam.sh"
 WINDOWS = os.name == "nt"  # Setup's Add to Steam button covers Windows
 HEAD = b"\x00shortcuts\x00"
 
@@ -406,7 +410,8 @@ def download_artwork(grid, appid, steamgriddb_key=""):
     grid, base, counts, problem = Path(grid), str(appid), {"saved": 0, "kept": 0}, ""
     if steamgriddb_key:
         api = "https://www.steamgriddb.com/api/v2/"
-        status, found = _get(api + "search/autocomplete/Hyrule%20Warriors%3A%20Definitive%20Edition", steamgriddb_key)
+        import urllib.parse
+        status, found = _get(api + "search/autocomplete/" + urllib.parse.quote(STEAM_NAME, safe=""), steamgriddb_key)
         try:
             game = json.loads(found)["data"][0]["id"] if status == 200 else None
         except (ValueError, KeyError, IndexError, TypeError):

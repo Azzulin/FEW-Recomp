@@ -176,6 +176,30 @@ public:
     // local / shared memory
     Id local_mem = 0, shared_mem = 0;
     u32 local_words = 0;
+    Id shared_words(u32& words);  // the workgroup array (declared on first use)
+
+    // global memory (LDG/STG/ATOM/RED). Maxwell addresses it with 64-bit pointers; NVN keeps the shader's storage
+    // buffers as descriptors {address lo, address hi, size, 0} in c0 (16 bytes each, from gmem_desc_base). The scan
+    // collects the descriptors the program reads; each becomes a storage buffer, and every access picks the one its
+    // address falls in at run time.
+    struct Gmem {
+        u32 cbuf_offset;
+        Id var = 0;
+    };
+    std::vector<Gmem> gmem;
+    bool gmem_used = false, gmem_written = false;
+    Id gmem_struct = 0, gmem_ptr_u32 = 0, t_u32_pair = 0;
+    void scan_global_memory();
+    std::vector<Gmem*> gmem_candidates(u32 ra);  // the descriptor Ra's address comes from, or all of them
+    const Block* cur_block = nullptr;            // block being emitted and the index of the instruction in it
+    size_t cur_index = 0;
+    Id gmem_var(Gmem& g);
+    void gmem_address(u32 ra, s32 imm, bool ext, Id& lo, Id& hi);
+    // In-range test of a 64-bit address against descriptor g, and the word index of the address in its buffer.
+    Id gmem_match(Gmem& g, Id lo, Id hi, u32 words, Id& index);
+    void emit_global(Inst in, Op op);
+    void emit_shared_atomic(Inst in, Op op);
+    Id atomic_op(u32 aop, bool is_signed, Id ptr, Id value, spv::Scope scope);  // 0: unsupported op
 };
 
 }  // namespace shader

@@ -80,6 +80,8 @@ extern void (*g_before_submit)();
 extern Recorder g_rec;
 
 void wait_serial(u64 serial);
+// Blocks until the waiter thread retired `serial`: the GPU finished it and its deferred work (copy-backs) ran.
+void wait_completed(u64 serial);
 // Blocks until the command buffer of `serial` has been submitted to the queue (the record worker submits after
 // recording). Another submission on the same queue that waits for the timeline must not be queued before it.
 void wait_submitted(u64 serial);
@@ -465,6 +467,7 @@ public:
     }
     void dispatch(const u32* cregs, u64 qmd_va) override {
         std::lock_guard<std::recursive_mutex> l(m_);
+        ProfScope ps(kProfDispatch);
         process_invalidations();
         do_dispatch(cregs, qmd_va);
     }
@@ -491,6 +494,12 @@ public:
         std::lock_guard<std::recursive_mutex> l(m_);
         process_invalidations();
         tc_.flush(addr, size);
+        gmem_sync(addr, size);
+    }
+    void sync_gpu_writes(u64 addr, u64 size) override {
+        if (!addr || !size || gmem_pending_max_.load(std::memory_order_acquire) <= g_s.completed.load()) return;
+        std::lock_guard<std::recursive_mutex> l(m_);
+        gmem_sync(addr, size);
     }
     bool is_gpu_modified(u64 addr, u64 size) override {
         if (!addr || !size) return false;
@@ -540,6 +549,25 @@ private:
         std::vector<VkDescriptorImageInfo> images;
         std::vector<VkBufferView> texels;
     };
+    // Storage buffers (shader global memory), one per guest range start. While the GPU copy holds writes that guest
+    // memory lacks, `pending` is the serial of the command buffer that wrote them; when it completes the waiter thread
+    // copies the buffer back to guest memory and clears it. Until then every bind uses the GPU copy, so dispatches
+    // that pass data through memory (count, compact, write arguments) see each other's results.
+    struct GmemBuf {
+        u8* host = nullptr;
+        u64 size = 0;         // bytes of the VkBuffer
+        u64 guest_bytes = 0;  // bytes mirrored from and to guest memory
+        Buffer buf{};
+        std::atomic<u64> pending{0};
+        u64 last_use = 0;
+        u64 copyback_serial = 0;  // serial whose completion already has a copy-back queued (one per command buffer)
+        u64 watch_epoch = 0;      // write-watch epoch of the last refresh from guest memory (tc_.written_since)
+        u64 uploaded_bytes = 0;   // guest bytes the buffer holds (0: never filled)
+    };
+    std::unordered_map<u8*, GmemBuf*> gmem_;
+    std::atomic<u64> gmem_pending_max_{0};  // highest serial with GPU writes not yet copied back (fast check)
+    VkDescriptorBufferInfo gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written);
+    void gmem_sync(u64 addr, u64 size);  // m_ held: wait for pending GPU writes overlapping [addr, addr+size)
     bool draw_samples_rt_ = false;  // the draw being built samples a render target (post-process pass)
     // Fragment-stage textures (bit = index in the stage's Resources::textures, first 32) bound to a render target
     // allocated at the internal resolution scale: their texel fetches (TLDS) scale the guest's coordinates.
@@ -882,6 +910,13 @@ private:
         VkPipeline pipe = VK_NULL_HANDLE;
     };
     std::unordered_map<u64, ComputeProgram*> compute_;
+    // Program key by code address and launch shape. Hashing the whole program per launch (up to ~100 KB, byte by
+    // byte) dominated battles with ~800 launches per frame; like graphics programs, the code at an address is
+    // re-hashed once per frame.
+    struct ComputeKeyCache {
+        u64 key = 0, frame = ~0ull;
+    };
+    std::unordered_map<u64, ComputeKeyCache> compute_keys_;
     Image* dummy2d_ = nullptr;
     Image* dummy3d_ = nullptr;
     Image* dummy1d_ = nullptr;

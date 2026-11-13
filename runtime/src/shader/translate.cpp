@@ -206,6 +206,8 @@ void Translator::emit_block_body(const Block& blk) {
         Op op = decode(raw);
         if (is_program_end(raw)) op = Op::INVALID;
         cur_pc = pc;
+        cur_block = &blk;
+        cur_index = i;
         u32 target = 0;
         Stack tstack;
         Stack before = st;
@@ -300,6 +302,7 @@ void Translator::emit_kill(Inst in) {
 
 void Translator::run() {
     build_cfg();
+    scan_global_memory();
     dispatcher = blocks.size() > 1;
     begin_program();
     Id fn_t = b.t_func(t_void);

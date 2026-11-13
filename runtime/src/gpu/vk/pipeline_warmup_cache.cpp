@@ -21,7 +21,7 @@ namespace gpu::warmup {
 namespace {
 constexpr u64 kHashSeed = 14695981039346656037ull;
 constexpr u64 kHashPrime = 1099511628211ull;
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2;  // 2: global memory (storage buffers from c0 descriptors) in translated programs
 constexpr size_t kHeaderBytes = 40;
 constexpr u8 kMagic[8] = {'H', 'W', 'D', 'P', 'W', 'M', '0', '1'};
 

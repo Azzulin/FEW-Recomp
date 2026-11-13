@@ -356,27 +356,14 @@ bool VkRenderer::bind_resources(const shader::Resources& res, StageLayout* sl, V
         u32 size = cbuf(sb.cbuf_index, sb.cbuf_offset + 8);
         u64 bytes = std::max<u64>(16, ((u64)size + 15) & ~15ull);
         bytes = std::min<u64>(bytes, 64ull << 20);
-        if (bytes > (1u << 20)) VK_LOG_ONCE("vk: storage buffer of %llu KiB bound (copied per draw, written %d)", (unsigned long long)(bytes >> 10), (int)sb.written);
+        if (bytes > (8u << 20)) VK_LOG_ONCE("vk: storage buffer of %llu KiB bound (written %d)", (unsigned long long)(bytes >> 10), (int)sb.written);
         u8* src = va ? host(va) : nullptr;
-        u64 avail = src ? mm_->contiguous_size(va, size) : 0;
-        if (sb.written && src) {
-            Buffer* b = new Buffer(create_buffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true));
-            memset(b->map, 0, bytes);
-            memcpy(b->map, src, std::min<u64>(avail, size));
-            u64 n = std::min<u64>(avail, size);
-            post.push_back([this, b, src, n] {
-                // GPU wrote the buffer: copy back to guest memory once the work completed
-                g_rec.defer([b, src, n] {
-                    memcpy(src, b->map, n);
-                    destroy_buffer(*b);
-                    delete b;
-                });
-            });
-            dw.buffers.push_back({b->buf, 0, bytes});
-        } else {
+        u64 avail = src ? std::min<u64>({mm_->contiguous_size(va, size), (u64)size, bytes}) : 0;
+        if (avail) {
+            dw.buffers.push_back(gmem_bind(src, avail, bytes, sb.written));
+        } else {  // unmapped descriptor (a slot the program reads but this launch leaves empty): zeros
             Slice s = g_rec.stage(bytes, props.minStorageBufferOffsetAlignment);
             memset(s.ptr, 0, bytes);
-            if (src) memcpy(s.ptr, src, std::min<u64>(avail, size));
             dw.buffers.push_back({s.buf, s.offset, bytes});
         }
         add_write(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1).pBufferInfo = &dw.buffers.back();
@@ -651,6 +638,98 @@ bool VkRenderer::bind_resources(const shader::Resources& res, StageLayout* sl, V
         if (!dw.writes.empty()) vkUpdateDescriptorSets(dev(), (u32)dw.writes.size(), dw.writes.data(), 0, nullptr);
     }
     return true;
+}
+
+// ------------------------------------------------------------------ storage buffers (shader global memory)
+static constexpr VkBufferUsageFlags kGmemUsage =
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+// Host-visible and host-cached: the waiter thread reads it back with the CPU (uncached memory reads crawl).
+static Buffer gmem_buffer(u64 bytes) {
+    Buffer b = create_buffer(bytes, kGmemUsage, true, false, true);
+    memset(b.map, 0, bytes);
+    return b;
+}
+
+VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written) {
+    ProfScope ps(kProfGmem);
+    GmemBuf*& slot = gmem_[src];
+    GmemBuf* gb = slot;
+    if (gb && gb->size < bytes) {
+        // Grows. Called while a draw or dispatch is being built, so no flush here: GPU writes the old buffer holds are
+        // carried over by a copy on the GPU, and this bind then counts as a write (its copy-back covers them).
+        Buffer old = gb->buf, nb = gmem_buffer(bytes);
+        if (gb->pending.load()) {
+            g_rec.cmd();
+            const VkBuffer o = old.buf, n = nb.buf;
+            const VkDeviceSize sz = old.size;
+            g_rec.record([o, n, sz](VkCommandBuffer cb) {
+                full_barrier(cb);
+                VkBufferCopy c{0, 0, sz};
+                vkCmdCopyBuffer(cb, o, n, 1, &c);
+                full_barrier(cb);
+            });
+            written = true;
+        }
+        retire_resource([old]() mutable { destroy_buffer(old); });
+        gb->buf = nb;
+        gb->size = bytes;
+        gb->last_use = 0;
+    }
+    if (!gb) {
+        gb = slot = new GmemBuf;
+        gb->host = src;
+        gb->size = bytes;
+        gb->buf = gmem_buffer(bytes);
+    }
+    gb->guest_bytes = guest_bytes;
+    const u64 serial = g_rec.serial();
+    if (!gb->pending.load()) {
+        // Guest memory is current: refresh the GPU copy, unless nothing wrote the range since the last refresh (write
+        // watch; a range outside it always refreshes). ~700 launches per battle frame bind these buffers. A copy that
+        // queued work may still read is replaced instead of overwritten when the guest changed the data.
+        const int written = tc_.written_since((u64)(uintptr_t)src, guest_bytes, gb->watch_epoch);
+        if (written != 0 || gb->uploaded_bytes != guest_bytes) {
+            if (gb->last_use > g_s.completed.load() && memcmp(gb->buf.map, src, guest_bytes) != 0) {
+                Buffer old = gb->buf;
+                retire_resource([old]() mutable { destroy_buffer(old); });
+                gb->buf = gmem_buffer(gb->size);
+            }
+            memcpy(gb->buf.map, src, guest_bytes);
+            gb->uploaded_bytes = guest_bytes;
+        }
+    }
+    gb->last_use = serial;
+    if (written) {
+        gb->pending.store(serial);
+        if (gmem_pending_max_.load() < serial) gmem_pending_max_.store(serial, std::memory_order_release);
+        if (gb->copyback_serial != serial) {  // one copy-back per command buffer, however many binds write it
+            gb->copyback_serial = serial;
+            g_rec.defer([gb, serial] {  // waiter thread, once the command buffer completed
+                if (gb->pending.load() != serial) return;  // written again later: that copy-back runs instead
+                memcpy(gb->host, gb->buf.map, gb->guest_bytes);
+                gb->pending.store(0, std::memory_order_release);
+            });
+        }
+    }
+    return {gb->buf.buf, 0, bytes};
+}
+
+void VkRenderer::gmem_sync(u64 addr, u64 size) {
+    if (gmem_pending_max_.load(std::memory_order_acquire) <= g_s.completed.load()) return;
+    u64 wait = 0;
+    for (const auto& [host, gb] : gmem_) {
+        const u64 p = gb->pending.load(std::memory_order_acquire);
+        const u64 a = (u64)(uintptr_t)gb->host;
+        if (p && addr < a + gb->guest_bytes && a < addr + size) wait = std::max(wait, p);
+    }
+    if (!wait) return;
+    static u64 syncs = 0;
+    if ((++syncs & (syncs - 1)) == 0)
+        hw_log("vk: waiting for shader writes to guest memory (indirect arguments, DMA source); %llu waits so far",
+               (unsigned long long)syncs);
+    g_rec.flush();
+    wait_completed(wait);
 }
 
 }  // namespace gpu::vk::detail
