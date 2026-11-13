@@ -633,7 +633,39 @@ public:
     }
 };
 
+// RomFS image of one add-on content package (fs/nsp.h aoc_*), read straight out of its NSP.
+class AocStorage : public FsService {
+public:
+    explicit AocStorage(size_t index) : FsService("aoc:IStorage") {
+        reg(0, [index](Request& rq, Response& rs) {  // Read(s64 offset, s64 size, B buffer)
+            u64 off = rq.pop<u64>();
+            u64 size = rq.pop<u64>();
+            ipc::Buffer b = rq.out_buffer();
+            if (b.size < size) size = b.size;
+            if ((s64)off < 0) return void(rs.result = ResultInvalidOffset);
+            if (!b.addr || !size) return;
+            if (!nsp::aoc_romfs_read(index, off, (u8*)b.addr, size)) {
+                static std::atomic<int> warned{0};
+                if (warned++ < 16)
+                    hw_log("fs: add-on content %zu read 0x%llx+0x%llx FAILED", index, (unsigned long long)off, (unsigned long long)size);
+                memset((void*)(uintptr_t)b.addr, 0, (size_t)size);
+            }
+            if (trace_enabled()) hw_log("fs: aoc %zu read 0x%llx+0x%llx", index, (unsigned long long)off, (unsigned long long)size);
+        });
+        reg(1, [](Request&, Response& rs) { rs.result = ResultUnsupportedOperation; });  // Write
+        reg(2, [](Request&, Response&) {});                                             // Flush
+        reg(3, [](Request&, Response& rs) { rs.result = ResultUnsupportedOperation; });  // SetSize
+        reg(4, [index](Request&, Response& rs) { rs.push<u64>(nsp::aoc_romfs_size(index)); });  // GetSize
+        reg(5, [](Request&, Response& rs) {                                             // OperateRange
+            u8 info[0x40] = {};
+            rs.data.insert(rs.data.end(), info, info + sizeof(info));
+        });
+    }
+};
+
 }  // namespace
+
+ServicePtr open_aoc_storage(size_t index) { return std::make_shared<AocStorage>(index); }
 
 const HostPath& romfs_host_dir() {
     static HostPath dir = [] {

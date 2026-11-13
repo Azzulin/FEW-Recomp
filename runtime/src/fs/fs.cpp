@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "fs_internal.h"
+#include "fs/nsp.h"
 #include "fs/save_dir.h"
 #include "debug_flags.h"
 
@@ -205,6 +206,14 @@ public:
         reg(202, [](Request& rq, Response& rs) {  // OpenDataStorageByDataId(u8 storage, u64 data id)
             u8 storage = rq.pop<u8>();
             u64 id = rq.pop<u64>();
+            // Add-on content (nn::fs::MountAddOnContent): the data id is the add-on content's title.
+            int aoc = nsp::aoc_index_of(id);
+            if (aoc >= 0) {
+                hw_log("fs: OpenDataStorageByDataId(storage %u, data id %016llx) -> add-on content", storage,
+                       (unsigned long long)id);
+                rs.push_object(open_aoc_storage((size_t)aoc));
+                return;
+            }
             hw_log("fs: OpenDataStorageByDataId(storage %u, data id %016llx) -> not found", storage,
                    (unsigned long long)id);
             rs.result = ResultTargetNotFound;

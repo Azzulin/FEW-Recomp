@@ -60,4 +60,12 @@ std::vector<std::string> exefs_files();
 uint64_t romfs_size();
 bool romfs_read(uint64_t off, uint8_t* dst, uint64_t size);
 
+// Add-on content (DLC) found beside the base game (or in HWDER_AOC_DIR): title kTitleId + 0x1000 + index.
+// Sorted by title. Each one's RomFS image is read like the base game's.
+size_t aoc_count();
+uint64_t aoc_title(size_t i);
+int aoc_index_of(uint64_t title);  // -1 when that add-on content is not present
+uint64_t aoc_romfs_size(size_t i);
+bool aoc_romfs_read(size_t i, uint64_t off, uint8_t* dst, uint64_t size);
+
 }  // namespace hwfs::nsp

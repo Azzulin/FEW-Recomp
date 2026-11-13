@@ -54,6 +54,8 @@ public:
 
 // RomFS: a virtual level-3 RomFS image synthesized from the extracted romfs directory.
 ServicePtr open_romfs_storage();
+// IStorage over add-on content package `index` (fs/nsp.h aoc_*).
+ServicePtr open_aoc_storage(size_t index);
 const HostPath& romfs_host_dir();
 
 // IFileSystem backed by a host directory (save data, SD card, read-only romfs view).

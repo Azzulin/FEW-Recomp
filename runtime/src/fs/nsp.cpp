@@ -472,8 +472,87 @@ struct State {
         std::vector<Range> map;  // sorted by virt; each range ends where the next starts
     };
     std::unique_ptr<Update> update;
+    // Add-on content (DLC): one NSP each, beside the base game's. The data NCA (content type 4 data or 5
+    // publicdata, title kTitleId + 0x1000 + index) has a plain AES-CTR RomFS read like the base game's.
+    struct Aoc {
+        u64 title = 0;
+        std::string path;
+        File file;   // Nca keeps a pointer to it: an Aoc never moves (held by unique_ptr)
+        Nca nca;
+        const Section* romfs = nullptr;
+    };
+    std::vector<std::unique_ptr<Aoc>> aoc;  // sorted by title
 };
 State* g_state = nullptr;
+
+// Tickets of an NSP into keys.titles: rights id at body+0x160, encrypted title key at body+0x40.
+void read_tickets(const File& file, const std::vector<PfsEntry>& files, Keys& keys) {
+    for (const PfsEntry& e : files) {
+        if (e.name.size() < 4 || e.name.compare(e.name.size() - 4, 4, ".tik") != 0 || e.size < 0x2C0) continue;
+        std::vector<u8> tik(e.size);
+        if (!file.read(e.offset, tik.data(), tik.size())) continue;
+        u32 sig;
+        memcpy(&sig, tik.data(), 4);
+        u32 body = sig == 0x10000 || sig == 0x10003 ? 0x240 : sig == 0x10001 || sig == 0x10004 ? 0x140 : 0x80;
+        if (body + 0x170 > tik.size()) continue;
+        keys.titles[to_hex(&tik[body + 0x160], 16)] = std::vector<u8>(&tik[body + 0x40], &tik[body + 0x50]);
+    }
+}
+
+// Add-on content: every *.nsp in HWDER_AOC_DIR, else in the base game's folder, whose data NCA belongs to this
+// game. HWDER_AOC=0 turns it off. Title keys come from each NSP's own ticket.
+void load_aoc(State& st) {
+    std::string flag = env_str("HWDER_AOC");
+    if (flag == "0") {
+        hw_log("nsp: add-on content off (HWDER_AOC=0)");
+        return;
+    }
+    std::string dir = env_str("HWDER_AOC_DIR");
+    if (dir.empty()) dir = st.path.substr(0, st.path.find_last_of("\\/"));
+    std::error_code ec;
+    std::vector<std::string> candidates;
+    for (const auto& de : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec)) {
+#ifdef _WIN32
+        std::string p = wide_to_utf8(de.path().wstring());
+#else
+        std::string p = de.path().string();
+#endif
+        if (p.size() < 4 || p == st.path) continue;
+        std::string ext = p.substr(p.size() - 4);
+        for (auto& c : ext) c = (char)tolower((unsigned char)c);
+        if (ext == ".nsp") candidates.push_back(p);
+    }
+    for (const std::string& p : candidates) {
+        auto a = std::make_unique<State::Aoc>();
+        a->path = p;
+        if (!a->file.open(p)) continue;
+        std::vector<PfsEntry> files;
+        auto raw = [&](u64 off, u8* dst, u64 size) { return a->file.read(off, dst, size); };
+        if (!parse_pfs0(raw, 0, files)) continue;
+        read_tickets(a->file, files, st.keys);
+        for (const PfsEntry& e : files) {
+            if (e.name.size() < 4 || e.name.compare(e.name.size() - 4, 4, ".nca") != 0) continue;
+            if (e.name.size() >= 9 && e.name.compare(e.name.size() - 9, 9, ".cnmt.nca") == 0) continue;
+            std::string err;
+            if (!a->nca.open(a->file, e.offset, e.size, st.keys, err)) {
+                hw_log("nsp: %s: %s", p.c_str(), err.c_str());
+                continue;
+            }
+            const u64 t = a->nca.title_id();
+            if ((a->nca.content_type() != 4 && a->nca.content_type() != 5) || (t & ~0xFFFull) != kTitleId + 0x1000) continue;
+            for (const Section& s : a->nca.sections())
+                if (s.fs_type == 0) a->romfs = &s;
+            if (a->romfs) a->title = t;
+            break;
+        }
+        if (!a->romfs) continue;
+        hw_log("nsp: add-on content %016llX (index %llu): %s", (unsigned long long)a->title,
+               (unsigned long long)(a->title - kTitleId - 0x1000), p.c_str());
+        st.aoc.push_back(std::move(a));
+    }
+    std::sort(st.aoc.begin(), st.aoc.end(), [](const auto& x, const auto& y) { return x->title < y->title; });
+    hw_log("nsp: %zu add-on content packages in %s", st.aoc.size(), dir.c_str());
+}
 
 // Smallest JSON reader that update.json needs: an unsigned number after "key":.
 bool json_number(const std::string& text, const char* key, u64& out) {
@@ -671,17 +750,7 @@ bool init(const std::string& exe_dir, std::string& error) {
     std::vector<PfsEntry> files;
     auto raw = [&](u64 off, u8* dst, u64 size) { return st->file.read(off, dst, size); };
     if (!parse_pfs0(raw, 0, files)) return fail(Status::Unreadable, "not an NSP (no PFS0 header): " + nsp);
-    // Tickets: rights id at body+0x160, encrypted title key at body+0x40.
-    for (const PfsEntry& e : files) {
-        if (e.name.size() < 4 || e.name.compare(e.name.size() - 4, 4, ".tik") != 0 || e.size < 0x2C0) continue;
-        std::vector<u8> tik(e.size);
-        if (!st->file.read(e.offset, tik.data(), tik.size())) continue;
-        u32 sig;
-        memcpy(&sig, tik.data(), 4);
-        u32 body = sig == 0x10000 || sig == 0x10003 ? 0x240 : sig == 0x10001 || sig == 0x10004 ? 0x140 : 0x80;
-        if (body + 0x170 > tik.size()) continue;
-        st->keys.titles[to_hex(&tik[body + 0x160], 16)] = std::vector<u8>(&tik[body + 0x40], &tik[body + 0x50]);
-    }
+    read_tickets(st->file, files, st->keys);
     // Program NCA: content type 0, not the .cnmt.nca metadata.
     bool found = false;
     std::string first_err;
@@ -756,6 +825,7 @@ bool init(const std::string& exe_dir, std::string& error) {
         inf.has_version = true;
         st->update = std::move(u);
     }
+    load_aoc(*st);
     inf.status = Status::Ok;
     g_state = st.release();
     return true;
@@ -825,6 +895,33 @@ bool romfs_read(u64 off, u8* dst, u64 size) {
         size = s.data_size - off;
     }
     return size == 0 || g_state->program.read(s, s.data_off + off, dst, size);
+}
+
+size_t aoc_count() { return g_state ? g_state->aoc.size() : 0; }
+
+u64 aoc_title(size_t i) { return g_state && i < g_state->aoc.size() ? g_state->aoc[i]->title : 0; }
+
+int aoc_index_of(u64 title) {
+    if (g_state)
+        for (size_t i = 0; i < g_state->aoc.size(); i++)
+            if (g_state->aoc[i]->title == title) return (int)i;
+    return -1;
+}
+
+u64 aoc_romfs_size(size_t i) {
+    return g_state && i < g_state->aoc.size() ? g_state->aoc[i]->romfs->data_size : 0;
+}
+
+bool aoc_romfs_read(size_t i, u64 off, u8* dst, u64 size) {
+    if (!g_state || i >= g_state->aoc.size()) return false;
+    const State::Aoc& a = *g_state->aoc[i];
+    const Section& s = *a.romfs;
+    if (off > s.data_size) return false;
+    if (size > s.data_size - off) {
+        memset(dst + (s.data_size - off), 0, (size_t)(size - (s.data_size - off)));
+        size = s.data_size - off;
+    }
+    return size == 0 || a.nca.read(s, s.data_off + off, dst, size);
 }
 
 }  // namespace hwfs::nsp

@@ -3,6 +3,7 @@
 #include "host/calendar.h"
 
 #include "common.h"
+#include "fs/nsp.h"
 #include "hwder/game_profile.h"
 
 extern "C" u64 hw_cntvct();
@@ -379,12 +380,26 @@ public:
 class Aoc : public SimpleService {
 public:
     Aoc() : SimpleService("aoc:u") {
-        // No add-on content yet: Fire Emblem Warriors has five (0100F15003E65001..5), served later through these lists
-        // and fsp-srv OpenDataStorageByDataId. Base ID = application ID + 0x1000.
-        ret<u32>(0, 0);  // CountAddOnContentByApplicationId
-        ret<u32>(1, 0);  // ListAddOnContentByApplicationId
-        ret<u32>(2, 0);  // CountAddOnContent
-        ret<u32>(3, 0);  // ListAddOnContent
+        // Add-on content found beside the base game (fs/nsp.cpp load_aoc): indices are title - base ID, the base ID
+        // being the application ID + 0x1000. The game mounts each one's RomFS through fsp-srv.
+        auto count = [](Request&, Response& rs) {
+            rs.push<u32>((u32)hwfs::nsp::aoc_count());
+        };
+        // (u32 offset, u32 count[, u64 application id]) -> u32 written, buffer of s32 indices
+        auto list = [](Request& rq, Response& rs) {
+            u32 offset = rq.pop<u32>(), max = rq.pop<u32>();
+            Buffer out = rq.out_buffer();
+            std::vector<s32> idx;
+            for (size_t i = offset; i < hwfs::nsp::aoc_count() && idx.size() < max && (idx.size() + 1) * 4 <= out.size; i++)
+                idx.push_back((s32)(hwfs::nsp::aoc_title(i) - (HW_GAME_TITLE_ID + 0x1000)));
+            if (!idx.empty()) write_buffer(out, idx.data(), idx.size() * 4);
+            hw_log("aoc: ListAddOnContent(offset %u, count %u) -> %zu", offset, max, idx.size());
+            rs.push<u32>((u32)idx.size());
+        };
+        reg(0, count);   // CountAddOnContentByApplicationId
+        reg(1, list);    // ListAddOnContentByApplicationId
+        reg(2, count);   // CountAddOnContent
+        reg(3, list);    // ListAddOnContent
         ret<u64>(4, HW_GAME_TITLE_ID + 0x1000);  // GetAddOnContentBaseIdByApplicationId
         ret<u64>(5, HW_GAME_TITLE_ID + 0x1000);  // GetAddOnContentBaseId
         nop({6, 7, 8});
