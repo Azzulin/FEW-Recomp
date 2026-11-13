@@ -1,0 +1,1069 @@
+// Window + Vulkan device + swapchain presentation, with frame pacing.
+#include "gpu/overlay.h"
+#include "gpu/settings.h"
+#include "display.h"
+
+#ifdef _WIN32
+#include <timeapi.h>
+#include <shellapi.h>
+#else
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include "host/media.h"
+#endif
+#include <filesystem>
+#include "host/timing.h"
+#include "host/platform.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <cwchar>
+#include <cmath>
+#include <thread>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "debug_flags.h"
+
+namespace display {
+void validation_report();  // HWDER_VALIDATION message counts (below)
+
+static Device g_dev;
+Device& device() { return g_dev; }
+
+#ifdef _WIN32
+static HWND g_hwnd;
+#else
+static SDL_Window* g_hwnd;
+static std::atomic<int> g_window_w{1280}, g_window_h{720};
+static std::atomic<double> g_monitor_hz{60};
+#endif
+static std::atomic<bool> g_window_ready{false}, g_resize{false};
+static VkSurfaceKHR g_surface;
+static VkSwapchainKHR g_swapchain;
+static VkExtent2D g_extent;
+static std::vector<VkImage> g_images;
+static VkCommandPool g_pool;
+// Signalled (value = present sequence) when a presentation blit has finished reading its source image.
+// The blit runs on the present queue, which does not order against the renderer's later writes, so the
+// compositor waits on this before handing the guest buffer back.
+static VkSemaphore g_present_timeline = VK_NULL_HANDLE;
+static std::mutex g_status_lock;
+static std::string g_status = "booting";
+static std::atomic<u64> g_last_guest_frame{0};
+static double g_present_ms = 0, g_limiter_ms = 0;  // accumulated per 300 frames
+
+#define VKCHECK(x)                                                                   \
+    do {                                                                             \
+        VkResult r_ = (x);                                                           \
+        if (r_ != VK_SUCCESS) {                                                      \
+            hw_log("Vulkan error %d at %s:%d: %s", (int)r_, __FILE__, __LINE__, #x); \
+            hw_fatal("vulkan");                                                      \
+        }                                                                            \
+    } while (0)
+
+static u64 now_ms() { return host::ticks_ms(); }
+
+// ------------------------------------------------------------------ window
+// Borderless fullscreen on the window's monitor (F11 / overlay option).
+#ifdef _WIN32
+static void set_borderless(HWND h, bool on) {
+    static WINDOWPLACEMENT prev = {sizeof(prev)};
+    DWORD style = GetWindowLong(h, GWL_STYLE);
+    bool is_on = !(style & WS_OVERLAPPEDWINDOW);
+    if (on == is_on) return;
+    if (on) {
+        MONITORINFO mi = {sizeof(mi)};
+        GetWindowPlacement(h, &prev);
+        GetMonitorInfo(MonitorFromWindow(h, MONITOR_DEFAULTTOPRIMARY), &mi);
+        SetWindowLong(h, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
+        SetWindowPos(h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    } else {
+        SetWindowLong(h, GWL_STYLE, style | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(h, &prev);
+        SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    settings::video().borderless = on;
+}
+
+// Temporary (CDS_FULLSCREEN) 60 Hz mode on the window's monitor. Windows restores it when the process ends; we
+// also restore it explicitly on a normal exit so the desktop never stays at 60 Hz.
+static WCHAR g_60hz_device[CCHDEVICENAME];  // monitor we switched, empty when none
+
+static void restore_display_60hz() {
+    if (!g_60hz_device[0]) return;
+    ChangeDisplaySettingsExW(g_60hz_device, nullptr, nullptr, 0, nullptr);
+    g_60hz_device[0] = 0;
+    hw_log("display: monitor refresh restored");
+}
+
+static void set_display_60hz(HWND h, bool on) {
+    if (!on) {
+        restore_display_60hz();
+        return;
+    }
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTOPRIMARY), &mi);
+    DEVMODEW cur{};
+    cur.dmSize = sizeof(cur);
+    EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &cur);
+    if (cur.dmDisplayFrequency == 60) return;
+    DEVMODEW dm = cur;
+    dm.dmDisplayFrequency = 60;
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL;
+    LONG r = ChangeDisplaySettingsExW(mi.szDevice, &dm, nullptr, CDS_FULLSCREEN, nullptr);
+    hw_log("display: monitor %ls -> 60 Hz (%s)", mi.szDevice, r == DISP_CHANGE_SUCCESSFUL ? "ok" : "failed");
+    if (r == DISP_CHANGE_SUCCESSFUL) {
+        wcscpy_s(g_60hz_device, mi.szDevice);
+        static bool hooked = false;
+        if (!hooked) hooked = true, atexit(restore_display_60hz);
+    }
+}
+
+static void set_client_size(HWND h, int w, int h_) {
+    RECT r{0, 0, w, h_};
+    AdjustWindowRect(&r, GetWindowLong(h, GWL_STYLE), FALSE);
+    SetWindowPos(h, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+}
+
+static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    if (overlay::wndproc(h, msg, wp, lp)) return 0;
+    switch (msg) {
+    case WM_SIZE: g_resize = true; return 0;
+    case WM_CLOSE: validation_report(); hw_log("window closed - exiting"); restore_display_60hz(); ExitProcess(0);
+    case overlay::kMsgBorderless: set_borderless(h, lp != 0); return 0;
+    case overlay::kMsgClientSize: set_client_size(h, (int)(lp >> 16), (int)(lp & 0xFFFF)); return 0;
+    case overlay::kMsgDisplay60: set_display_60hz(h, lp != 0); return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_F1 || wp == VK_ESCAPE) overlay::toggle();  // while open, the overlay handles Escape itself
+        if (wp == VK_F11) {
+            set_borderless(h, !settings::video().borderless);
+            settings::save();
+        }
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static void window_thread() {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    WNDCLASSEXW wc = {sizeof(wc)};
+    wc.lpfnWndProc = wnd_proc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"HWDER";
+    RegisterClassExW(&wc);
+    RECT r = {0, 0, 1280, 720};
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    // HWDER_OFFSCREEN=1: a normal visible window (real swapchain, real presents) parked beyond the
+    // desktop edge and never activated, so automated runs exercise the present path without
+    // appearing on the user's screen or taking their focus.
+    const bool offscreen = debug::flag(debug::Offscreen);
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    if (offscreen) {
+        RECT vd{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
+        x = vd.left + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;  // right of every monitor
+        y = vd.top + 64;
+    }
+    g_hwnd = CreateWindowExW(offscreen ? WS_EX_NOACTIVATE : 0, L"HWDER", L"Hyrule Warriors: Definitive Edition (HWDER)",
+                             WS_OVERLAPPEDWINDOW, x, y, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance,
+                             nullptr);
+    // Automated test runs (they set HWDER_LOG) open minimized without stealing focus.
+    ShowWindow(g_hwnd, offscreen ? SW_SHOWNOACTIVATE : debug::flag(debug::Log) && !debug::flag(debug::Show) ? SW_SHOWMINNOACTIVE : SW_SHOW);
+    g_window_ready = true;
+    MSG m;
+    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+}
+
+#else
+static void update_window_metrics() {
+    int w = 0, h = 0;
+    if (SDL_GetWindowSizeInPixels(g_hwnd, &w, &h)) { g_window_w = w; g_window_h = h; }
+    if (const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(g_hwnd)))
+        g_monitor_hz = mode->refresh_rate > 1 ? mode->refresh_rate : 60;
+}
+static void set_borderless(SDL_Window* window, bool on) {
+    if (!SDL_SetWindowFullscreen(window, on)) hw_log("display: fullscreen failed: %s", SDL_GetError());
+    else settings::video().borderless = on;
+    update_window_metrics();
+}
+static void set_client_size(SDL_Window* window, int width, int height) {
+    if (!SDL_SetWindowSize(window, width, height)) hw_log("display: resize failed: %s", SDL_GetError());
+}
+static void set_display_60hz(SDL_Window* window, bool on) {
+    if (!on) { SDL_SetWindowFullscreenMode(window, nullptr); return; }
+    const auto* current = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+    SDL_DisplayMode requested{};
+    if (current && SDL_GetClosestFullscreenDisplayMode(current->displayID, current->w, current->h, 60.0f, false, &requested)) {
+        if (!SDL_SetWindowFullscreenMode(window, &requested)) hw_log("display: 60 Hz mode unavailable: %s", SDL_GetError());
+        if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN))
+            hw_log("display: 60 Hz mode applies while fullscreen; desktop refresh is unchanged");
+    }
+}
+static void window_thread() {
+    auto flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (getenv("HWDER_OFFSCREEN")) flags |= SDL_WINDOW_HIDDEN;
+    g_hwnd = SDL_CreateWindow("Hyrule Warriors: Definitive Edition (HWDER)", 1280, 720, flags);
+    if (!g_hwnd) hw_fatal(SDL_GetError());
+    host::set_media_focus((SDL_GetWindowFlags(g_hwnd) & SDL_WINDOW_INPUT_FOCUS) != 0);
+    update_window_metrics(); g_window_ready = true;
+}
+void handle_window_event(const SDL_Event& event) {
+    if (event.type < SDL_EVENT_WINDOW_FIRST || event.type > SDL_EVENT_WINDOW_LAST) return;
+    if (!g_hwnd || event.window.windowID != SDL_GetWindowID(g_hwnd)) return;
+    if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED ||
+        event.type == SDL_EVENT_WINDOW_RESTORED || event.type == SDL_EVENT_WINDOW_MINIMIZED) {
+        update_window_metrics(); g_resize = true;
+    }
+}
+void toggle_borderless() { set_borderless(g_hwnd, !settings::video().borderless); settings::save(); }
+#endif
+
+void apply_window_settings() {
+#ifdef _WIN32
+    const auto& video = settings::video();
+    PostMessageW(g_hwnd, overlay::kMsgBorderless, 0, video.borderless ? 1 : 0);
+    if (!video.borderless && video.window_w && video.window_h)
+        PostMessageW(g_hwnd, overlay::kMsgClientSize, 0, (LPARAM)((video.window_w << 16) | video.window_h));
+#else
+    on_main_thread([] {
+        const auto& video = settings::video();
+        set_borderless(g_hwnd, video.borderless);
+        if (!video.borderless && video.window_w && video.window_h) set_client_size(g_hwnd, video.window_w, video.window_h);
+    });
+#endif
+}
+void apply_refresh_rate() {
+#ifdef _WIN32
+    PostMessageW(g_hwnd, overlay::kMsgDisplay60, 0, settings::video().display_60hz ? 1 : 0);
+#else
+    on_main_thread([] { set_display_60hz(g_hwnd, settings::video().display_60hz); });
+#endif
+}
+void restore_desktop_mode() {
+#ifdef _WIN32
+    restore_display_60hz();
+#else
+    on_main_thread([] {
+        if (!g_hwnd) return;
+        // Restore exclusive X11 display modes before _Exit bypasses SDL teardown.
+        SDL_SetWindowFullscreenMode(g_hwnd, nullptr);
+        SDL_SetWindowFullscreen(g_hwnd, false);
+        SDL_SyncWindow(g_hwnd);
+    });
+#endif
+}
+void open_path(const std::string& path) {
+#ifdef _WIN32
+    auto native = std::filesystem::u8path(path).wstring();
+    ShellExecuteW(nullptr, L"open", native.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    on_main_thread([path] {
+        std::error_code error;
+        const auto bytes = std::filesystem::absolute(std::filesystem::path(path), error).generic_string();
+        if (error) return;
+        constexpr char hex[] = "0123456789ABCDEF";
+        std::string uri = "file://";
+        for (unsigned char byte : bytes) {
+            if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+                (byte >= '0' && byte <= '9') || byte == '/' || byte == '-' || byte == '_' || byte == '.' || byte == '~') uri += char(byte);
+            else { uri += '%'; uri += hex[byte >> 4]; uri += hex[byte & 15]; }
+        }
+        if (!SDL_OpenURL(uri.c_str())) hw_log("open path: %s", SDL_GetError());
+    });
+#endif
+}
+
+// ------------------------------------------------------------------ Vulkan
+static bool has_ext(const std::vector<VkExtensionProperties>& v, const char* n) {
+    for (auto& e : v)
+        if (!strcmp(e.extensionName, n)) return true;
+    return false;
+}
+
+// The Vulkan 1.1-1.3 features HWDER asks for. A device without a required one is skipped; the others are enabled
+// only where the driver offers them. Asking for one a driver lacks fails vkCreateDevice with
+// VK_ERROR_FEATURE_NOT_PRESENT: GTX 10-series drivers have no shaderFloat16 (issues #2, #7). The translated
+// shaders use none of the optional ones today; they stay enabled where offered, as before.
+struct DeviceFeatures {
+    VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    DeviceFeatures() = default;
+    DeviceFeatures(const DeviceFeatures&) = delete;  // the pNext chain points into the object
+    // The 1.3 struct only on a 1.3 device; without it a 1.2 device reports dynamicRendering as missing.
+    VkPhysicalDeviceFeatures2* chain(bool vk13) {
+        f2.pNext = &f11;
+        f11.pNext = &f12;
+        f12.pNext = vk13 ? &f13 : nullptr;
+        f13.pNext = nullptr;
+        return &f2;
+    }
+};
+struct DeviceFeature {
+    const char* name;
+    bool required;
+    VkBool32* (*at)(DeviceFeatures&);
+};
+static const DeviceFeature kDeviceFeatures[] = {
+    {"timelineSemaphore", true, [](DeviceFeatures& f) { return &f.f12.timelineSemaphore; }},
+    {"dynamicRendering", true, [](DeviceFeatures& f) { return &f.f13.dynamicRendering; }},
+    {"synchronization2", false, [](DeviceFeatures& f) { return &f.f13.synchronization2; }},
+    {"maintenance4", false, [](DeviceFeatures& f) { return &f.f13.maintenance4; }},
+    {"shaderInt8", false, [](DeviceFeatures& f) { return &f.f12.shaderInt8; }},
+    {"storageBuffer8BitAccess", false, [](DeviceFeatures& f) { return &f.f12.storageBuffer8BitAccess; }},
+    {"uniformAndStorageBuffer8BitAccess", false, [](DeviceFeatures& f) { return &f.f12.uniformAndStorageBuffer8BitAccess; }},
+    {"scalarBlockLayout", false, [](DeviceFeatures& f) { return &f.f12.scalarBlockLayout; }},
+    {"shaderFloat16", false, [](DeviceFeatures& f) { return &f.f12.shaderFloat16; }},
+    {"storageBuffer16BitAccess", false, [](DeviceFeatures& f) { return &f.f11.storageBuffer16BitAccess; }},
+    {"uniformAndStorageBuffer16BitAccess", false, [](DeviceFeatures& f) { return &f.f11.uniformAndStorageBuffer16BitAccess; }},
+    {"shaderDrawParameters", false, [](DeviceFeatures& f) { return &f.f11.shaderDrawParameters; }},
+};
+
+// HWDER_MASK_FEATURES: "shaderFloat16,storageBuffer8BitAccess" -> treated as not offered (tests the checks above).
+static bool feature_masked(const char* name) {
+    const char* m = debug::str(debug::MaskFeatures);
+    if (!m) return false;
+    const size_t n = strlen(name);
+    for (const char* p = m; *p;) {
+        const char* end = strchr(p, ',');
+        const size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len == n && !strncmp(p, name, n)) return true;
+        if (!end) break;
+        p = end + 1;
+    }
+    return false;
+}
+
+static void query_features(VkPhysicalDevice pd, u32 api, DeviceFeatures& have) {
+    vkGetPhysicalDeviceFeatures2(pd, have.chain(api >= VK_API_VERSION_1_3));
+    for (const DeviceFeature& f : kDeviceFeatures)
+        if (*f.at(have) && feature_masked(f.name)) *f.at(have) = VK_FALSE;
+}
+
+static const char* missing_required(DeviceFeatures& have) {
+    for (const DeviceFeature& f : kDeviceFeatures)
+        if (f.required && !*f.at(have)) return f.name;
+    return nullptr;
+}
+
+static void create_swapchain() {
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_dev.phys, g_surface, &caps);
+    VkExtent2D ext = caps.currentExtent;
+    if (ext.width == 0xFFFFFFFF) {
+#ifdef _WIN32
+        ext = {1280, 720};
+#else
+        ext = {std::clamp(static_cast<u32>(g_window_w.load()), caps.minImageExtent.width, caps.maxImageExtent.width),
+               std::clamp(static_cast<u32>(g_window_h.load()), caps.minImageExtent.height, caps.maxImageExtent.height)};
+#endif
+    }
+    if (ext.width == 0 || ext.height == 0) return;
+    u32 n = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(g_dev.phys, g_surface, &n, nullptr);
+    std::vector<VkPresentModeKHR> modes(n);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(g_dev.phys, g_surface, &n, modes.data());
+    // Our frame limiter paces to the game's rate; MAILBOX avoids double pacing and adds no latency.
+    VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end()) mode = VK_PRESENT_MODE_MAILBOX_KHR;
+    if (settings::video().vsync) mode = VK_PRESENT_MODE_FIFO_KHR;
+    VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+    sci.surface = g_surface;
+    sci.minImageCount = std::max(3u, caps.minImageCount);
+    if (caps.maxImageCount) sci.minImageCount = std::min(sci.minImageCount, caps.maxImageCount);
+    sci.imageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    sci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    sci.imageExtent = ext;
+    sci.imageArrayLayers = 1;
+    sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    sci.preTransform = caps.currentTransform;
+    sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    sci.presentMode = mode;
+    sci.clipped = VK_TRUE;
+    sci.oldSwapchain = g_swapchain;
+    VkSwapchainKHR sc;
+    VKCHECK(vkCreateSwapchainKHR(g_dev.dev, &sci, nullptr, &sc));
+    if (g_swapchain) vkDestroySwapchainKHR(g_dev.dev, g_swapchain, nullptr);
+    g_swapchain = sc;
+    g_extent = ext;
+    vkGetSwapchainImagesKHR(g_dev.dev, sc, &n, nullptr);
+    g_images.resize(n);
+    vkGetSwapchainImagesKHR(g_dev.dev, sc, &n, g_images.data());
+    overlay::on_swapchain(g_images, sci.imageFormat);
+}
+
+// HWDER_VALIDATION: validation layer messages go to hwder.log (without a messenger the layer prints
+// to the console only). Each message ID is logged in full the first 5 times, then counted; the counts
+// are summarised every 10 s and at exit.
+static std::mutex g_val_m;
+static std::unordered_map<std::string, u64> g_val_counts;
+static u64 g_val_last_summary = 0;
+static void validation_summary(bool force) {
+    std::lock_guard<std::mutex> l(g_val_m);
+    u64 now = host::ticks_ms();
+    if (!force && now - g_val_last_summary < 10000) return;
+    g_val_last_summary = now;
+    if (g_val_counts.empty()) return;
+    std::vector<std::pair<u64, std::string>> v;
+    for (auto& [k, c] : g_val_counts) v.push_back({c, k});
+    std::sort(v.rbegin(), v.rend());
+    std::string line;
+    for (size_t i = 0; i < v.size() && i < 25; i++) line += " " + v[i].second + " x" + std::to_string(v[i].first) + ";";
+    hw_log("vk validation: %zu message IDs so far:%s", v.size(), line.c_str());
+}
+static VKAPI_ATTR VkBool32 VKAPI_CALL validation_callback(VkDebugUtilsMessageSeverityFlagBitsEXT sev, VkDebugUtilsMessageTypeFlagsEXT,
+                                                          const VkDebugUtilsMessengerCallbackDataEXT* d, void*) {
+    if (sev < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
+    std::string id = d->pMessageIdName ? d->pMessageIdName : "?";
+    u64 c;
+    {
+        std::lock_guard<std::mutex> l(g_val_m);
+        c = ++g_val_counts[id];
+    }
+    if (c <= 5)
+        hw_log("vk validation %s: [%s] %s", sev >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "ERROR" : "warning", id.c_str(),
+               d->pMessage ? d->pMessage : "");
+    validation_summary(false);
+    return VK_FALSE;
+}
+void validation_report() { validation_summary(true); }
+
+// A player without a usable Vulkan driver would otherwise see the game close with only a log line. `found` names
+// what the best device lacked (API version, extension or feature), so the text does not claim Vulkan is missing.
+[[noreturn]] static void no_vulkan(const char* why, const std::wstring& found = L"") {
+    std::wstring msg = L"HWDER could not start because no graphics driver offers the Vulkan support it needs.\n\n";
+    if (!found.empty()) msg += found + L"\n\n";
+    msg += L"Install the latest driver for your graphics card (NVIDIA, AMD or Intel) and try again.";
+#ifdef _WIN32
+    MessageBoxW(nullptr, msg.c_str(), L"HWDER", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+#else
+    std::string text;
+    for (wchar_t ch : msg) text += ch < 128 ? (char)ch : '?';
+    if (!debug::flag(debug::Mute)) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "HWDER", text.c_str(), nullptr);
+#endif
+    hw_fatal(why);
+    host::process_exit(1);
+}
+
+static void init_vulkan() {
+    if (!hw_vk_load_global()) no_vulkan("vulkan-1.dll not found - a Vulkan capable GPU driver is required");
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.pApplicationName = "HWDER";
+    app.apiVersion = VK_API_VERSION_1_3;
+#ifdef _WIN32
+    std::vector<const char*> inst_ext{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#else
+    Uint32 extension_count = 0;
+    const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
+    if (!extensions) hw_fatal(SDL_GetError());
+    std::vector<const char*> inst_ext(extensions, extensions + extension_count);
+#endif
+    VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ici.pApplicationInfo = &app;
+    ici.enabledExtensionCount = static_cast<u32>(inst_ext.size());
+    ici.ppEnabledExtensionNames = inst_ext.data();
+    bool messenger = false;
+    const char* layer = "VK_LAYER_KHRONOS_validation";
+    if (debug::flag(debug::Validation)) {
+        // The layer ships with the Vulkan SDK, not the GPU driver. Requesting a missing layer fails
+        // vkCreateInstance (VK_ERROR_LAYER_NOT_PRESENT), so check first and run without it.
+        u32 nl = 0;
+        vkEnumerateInstanceLayerProperties(&nl, nullptr);
+        std::vector<VkLayerProperties> lp(nl);
+        vkEnumerateInstanceLayerProperties(&nl, lp.data());
+        bool have = false;
+        for (const auto& l : lp) have = have || strcmp(l.layerName, layer) == 0;
+        if (have) {
+            ici.enabledLayerCount = 1;
+            ici.ppEnabledLayerNames = &layer;
+            inst_ext.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            messenger = true;
+            hw_log("display: HWDER_VALIDATION: %s enabled, messages go to hwder.log", layer);
+        } else {
+            hw_log("display: HWDER_VALIDATION is set but %s is not installed (it comes with the Vulkan SDK) - "
+                   "starting without validation", layer);
+        }
+    }
+    ici.enabledExtensionCount = static_cast<u32>(inst_ext.size());
+    ici.ppEnabledExtensionNames = inst_ext.data();
+    if (VkResult r = vkCreateInstance(&ici, nullptr, &g_dev.instance); r != VK_SUCCESS) {
+        hw_log("vkCreateInstance failed: %d", (int)r);
+        no_vulkan("vkCreateInstance failed");
+    }
+    hw_vk_load_instance(g_dev.instance);
+    if (messenger && vkCreateDebugUtilsMessengerEXT) {
+        VkDebugUtilsMessengerCreateInfoEXT mci{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+        mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        mci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                          VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        mci.pfnUserCallback = validation_callback;
+        VkDebugUtilsMessengerEXT m = VK_NULL_HANDLE;
+        if (vkCreateDebugUtilsMessengerEXT(g_dev.instance, &mci, nullptr, &m) != VK_SUCCESS)
+            hw_log("display: HWDER_VALIDATION: could not create the debug messenger; messages go to the console only");
+    }
+    u32 n = 0;
+    vkEnumeratePhysicalDevices(g_dev.instance, &n, nullptr);
+    std::vector<VkPhysicalDevice> pds(n);
+    vkEnumeratePhysicalDevices(g_dev.instance, &n, pds.data());
+    std::wstring unusable;  // last device that cannot run HWDER, named in the error
+    int best = -1;
+    for (auto pd : pds) {
+        VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &drv};
+        vkGetPhysicalDeviceProperties2(pd, &p2);
+        const VkPhysicalDeviceProperties& p = p2.properties;
+        wchar_t line[400];
+        if (p.apiVersion < VK_API_VERSION_1_2) {
+            hw_log("vulkan: skipping %s (api %u.%u, 1.2 needed)", p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+                   VK_API_VERSION_MINOR(p.apiVersion));
+            swprintf(line, 400, L"Found: %hs, which only offers Vulkan %u.%u.", p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+                     VK_API_VERSION_MINOR(p.apiVersion));
+            unusable = line;
+            continue;
+        }
+        u32 ne = 0;
+        vkEnumerateDeviceExtensionProperties(pd, nullptr, &ne, nullptr);
+        std::vector<VkExtensionProperties> ext(ne);
+        vkEnumerateDeviceExtensionProperties(pd, nullptr, &ne, ext.data());
+        const char* missing = nullptr;
+        for (const char* req : {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME})
+            if (!missing && !has_ext(ext, req)) missing = req;
+        if (missing) {
+            // e.g. Microsoft's Vulkan-on-D3D12 layer (Dozen), which Windows' compatibility pack installs next to
+            // the real driver and which reports the same GPU name.
+            hw_log("vulkan: skipping %s (api %u.%u, no %s)", p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+                   VK_API_VERSION_MINOR(p.apiVersion), missing);
+            swprintf(line, 400, L"Found: %hs, which lacks %hs.", p.deviceName, missing);
+            unusable = line;
+            continue;
+        }
+        DeviceFeatures have;
+        query_features(pd, p.apiVersion, have);
+        if (const char* feature = missing_required(have)) {
+            hw_log("vulkan: skipping %s (api %u.%u, no %s)", p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+                   VK_API_VERSION_MINOR(p.apiVersion), feature);
+            swprintf(line, 400, L"Found: %hs, which lacks the Vulkan feature %hs.", p.deviceName, feature);
+            unusable = line;
+            continue;
+        }
+        // Prefer a native driver over a translation layer, then a discrete GPU, then the newest API.
+        int score = (drv.driverID != VK_DRIVER_ID_MESA_DOZEN) * 4 + (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) * 2 +
+                    (p.apiVersion >= VK_API_VERSION_1_3);
+        hw_log("vulkan: candidate %s (api %u.%u, score %d)", p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+               VK_API_VERSION_MINOR(p.apiVersion), score);
+        if (score > best) {
+            best = score;
+            g_dev.phys = pd;
+            g_dev.props = p;
+        }
+    }
+    if (!g_dev.phys) no_vulkan("no usable Vulkan device", unusable);
+    vkGetPhysicalDeviceMemoryProperties(g_dev.phys, &g_dev.mem);
+    hw_log("vulkan: %s (api %u.%u)", g_dev.props.deviceName, VK_API_VERSION_MAJOR(g_dev.props.apiVersion),
+           VK_API_VERSION_MINOR(g_dev.props.apiVersion));
+#ifdef _WIN32
+    VkWin32SurfaceCreateInfoKHR wsci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+    wsci.hinstance = GetModuleHandleW(nullptr);
+    wsci.hwnd = g_hwnd;
+    VKCHECK(vkCreateWin32SurfaceKHR(g_dev.instance, &wsci, nullptr, &g_surface));
+#else
+    if (!SDL_Vulkan_CreateSurface(g_hwnd, g_dev.instance, nullptr, &g_surface)) hw_fatal(SDL_GetError());
+#endif
+    vkGetPhysicalDeviceQueueFamilyProperties(g_dev.phys, &n, nullptr);
+    std::vector<VkQueueFamilyProperties> qfs(n);
+    vkGetPhysicalDeviceQueueFamilyProperties(g_dev.phys, &n, qfs.data());
+    for (u32 i = 0; i < n; i++) {
+        VkBool32 present = 0;
+        vkGetPhysicalDeviceSurfaceSupportKHR(g_dev.phys, i, g_surface, &present);
+        if ((qfs[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && (qfs[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && present) {
+            g_dev.queue_family = i;
+            break;
+        }
+    }
+    vkEnumerateDeviceExtensionProperties(g_dev.phys, nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> exts(n);
+    vkEnumerateDeviceExtensionProperties(g_dev.phys, nullptr, &n, exts.data());
+    std::vector<const char*> dev_ext = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+    for (const char* opt : {VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME,
+                            VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME})
+        if (has_ext(exts, opt)) dev_ext.push_back(opt);
+    // Two queues when available: presentation must never sit in front of renderer work (a present
+    // waiting for a swapchain image would otherwise block the fences the game waits on).
+    u32 nqf = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(g_dev.phys, &nqf, nullptr);
+    std::vector<VkQueueFamilyProperties> qfp(nqf);
+    vkGetPhysicalDeviceQueueFamilyProperties(g_dev.phys, &nqf, qfp.data());
+    u32 qcount = std::min(2u, qfp[g_dev.queue_family].queueCount);
+    float prio[2] = {1.0f, 1.0f};
+    VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+    qci.queueFamilyIndex = g_dev.queue_family;
+    qci.queueCount = qcount;
+    qci.pQueuePriorities = prio;
+    const bool vk13 = g_dev.props.apiVersion >= VK_API_VERSION_1_3;  // always true: dynamicRendering is required
+    DeviceFeatures have, want;
+    query_features(g_dev.phys, g_dev.props.apiVersion, have);
+    VkPhysicalDeviceFeatures2* feat = want.chain(vk13);
+    std::string enabled, off;
+    for (const DeviceFeature& f : kDeviceFeatures) {
+        std::string& list = *f.at(have) ? enabled : off;
+        if (*f.at(have)) *f.at(want) = VK_TRUE;
+        list += (list.empty() ? "" : " ") + std::string(f.name);
+    }
+    hw_log("vulkan: features %s", enabled.c_str());
+    if (!off.empty()) hw_log("vulkan: optional features not offered (left off): %s", off.c_str());
+    feat->features = have.f2.features;
+    feat->features.robustBufferAccess = VK_FALSE;
+    VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, feat};
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos = &qci;
+    dci.enabledExtensionCount = (u32)dev_ext.size();
+    dci.ppEnabledExtensionNames = dev_ext.data();
+    if (VkResult r = vkCreateDevice(g_dev.phys, &dci, nullptr, &g_dev.dev); r != VK_SUCCESS) {
+        hw_log("vkCreateDevice failed: %d (features asked for: %s)", (int)r, enabled.c_str());
+        wchar_t line[400];
+        swprintf(line, 400, L"%hs did not accept the Vulkan features HWDER asked for (error %d).", g_dev.props.deviceName, (int)r);
+        no_vulkan("vkCreateDevice failed", line);
+    }
+    hw_vk_load_device(g_dev.dev);
+    vkGetDeviceQueue(g_dev.dev, g_dev.queue_family, 0, &g_dev.queue);
+    vkGetDeviceQueue(g_dev.dev, g_dev.queue_family, qcount > 1 ? 1 : 0, &g_dev.present_queue);
+    if (qcount > 1) hw_log("display: presentation uses a separate queue");
+    VkCommandPoolCreateInfo cpi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    cpi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    cpi.queueFamilyIndex = g_dev.queue_family;
+    VKCHECK(vkCreateCommandPool(g_dev.dev, &cpi, nullptr, &g_pool));
+    VkSemaphoreTypeCreateInfo tci{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+    tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+    VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
+    VKCHECK(vkCreateSemaphore(g_dev.dev, &sci, nullptr, &g_present_timeline));
+    create_swapchain();
+}
+
+// ------------------------------------------------------------------ presentation
+struct FrameSync {
+    VkSemaphore acquired = VK_NULL_HANDLE, rendered = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+};
+static FrameSync g_frames[3];
+static u32 g_frame_idx;
+static std::vector<VkSemaphore> g_rendered;  // per swapchain image: signalled by the blit submit, waited on by its present
+static u64 g_present_seq = 0;                       // under g_present_lock
+static std::atomic<u64> g_last_image_ticket{0};     // last present_image's blit (0: nothing submitted)
+static std::mutex g_present_lock;
+static double g_trace_fence_ms, g_trace_acq_ms;  // HWDER_PACE_TRACE: last present's fence wait / acquire time
+static double g_trace_overshoot_ms;               // HWDER_PACE_TRACE: last limiter sleep's wake-up lateness
+
+void client_size(unsigned* w, unsigned* h) {
+    *w = g_extent.width;
+    *h = g_extent.height;
+}
+double monitor_hz() {
+#ifdef _WIN32
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1) return (double)dm.dmDisplayFrequency;
+    return 60.0;
+#else
+    return g_monitor_hz.load();
+#endif
+}
+static void frame_limit(u32 interval, u32 release_hz) {
+    static host::Counter freq, next;
+
+    if (!freq.QuadPart) host::counter_frequency(&freq);
+    const char* env = debug::str(debug::Fps);
+    // The presenter runs at a fixed 60 Hz like the console's display. A swap interval of 2 means the
+    // frame stays up for two vsyncs: pace such a present two slots ahead instead of re-targeting the
+    // limiter to 30 fps (the title screen alternates 1/2 every second, which made that stutter).
+    // The game is frame-locked (its logic advances per released frame), so the release grid stays at
+    // 60 Hz whatever the display runs at; HWDER_FPS exists only for experiments.
+    // GI rate is attached to the queued frame, not inferred from the producer's current state: the
+    // compositor can lag across battle/menu transitions. Native experiments keep their old semantics.
+    double fps = release_hz ? (double)release_hz : (env ? atof(env) : 60.0);
+    static u32 last_interval = 0;
+    if (interval != last_interval) {
+        last_interval = interval;
+        hw_log("display: swap interval %u", interval);
+    }
+    u32 slots = release_hz == 120 ? 1 : std::max(1u, std::min(interval, 4u));
+    // Experiment: release every frame at the 60 Hz grid even when the game asks for interval 2.
+    static const bool force1 = debug::flag(debug::ForceInterval1);
+    if (force1 && !release_hz) slots = 1;
+    if (fps <= 0) return;
+    // The compositor's timer wake-ups must not be delayed by other busy threads (a late wake-up shows
+    // up directly as a late frame followed by a short one).
+    static bool prio = false;
+    if (!prio) {
+        prio = true;
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#endif
+    }
+    host::Counter now;
+    host::counter(&now);
+    s64 period = (s64)(freq.QuadPart / fps);
+    // `next` is the virtual vblank grid. In steady state we arrive here a little after the grid point
+    // (the game produced its frame right after we released the previous buffer). A frame up to one period
+    // late keeps the grid: it is shown at once and the next one at the following grid point, so the time
+    // is caught up. The game is frame-locked, and re-anchoring on every frame more than a quarter period
+    // late made a busy battle run at 17.0 ms instead of 16.7 (and the 120 fps mode at 8.57 instead of 8.33).
+    // Only a real stall (more than a period behind) re-anchors the grid to now instead of letting several
+    // presents burst through at zero wait.
+    g_trace_overshoot_ms = 0;
+    if (!next.QuadPart || now.QuadPart - next.QuadPart > period) {
+        // Late frame: show it immediately (never add a full period of latency to a frame that is
+        // already late - when the game runs slower than the grid that would cost 16 ms on EVERY
+        // frame) but anchor the grid so the following frame still stays up for a whole period.
+        next.QuadPart = now.QuadPart + period * slots;
+        return;
+    }
+    next.QuadPart += period * slots;
+    s64 wait = next.QuadPart - now.QuadPart;
+    if (wait <= 0) return;
+    s64 sleep_100ns = wait * 10000000 / freq.QuadPart - 10000;
+    if (sleep_100ns > 0) {
+        host::sleep_ns(sleep_100ns * 100);
+        host::Counter woke;
+        host::counter(&woke);
+        // How late the timer woke us relative to the requested due time (pacing diagnostics).
+        g_trace_overshoot_ms = ((woke.QuadPart - now.QuadPart) * 1000.0 / freq.QuadPart) - sleep_100ns / 10000.0;
+    }
+    do host::counter(&now);
+    while (now.QuadPart < next.QuadPart);
+}
+
+static void update_title(bool guest) {
+    static u64 frames, last = now_ms();
+    frames++;
+    u64 t = now_ms();
+    if (t - last < 500) return;
+    double fps = frames * 1000.0 / (t - last);
+    frames = 0;
+    last = t;
+    std::string status;
+    {
+        std::lock_guard<std::mutex> g(g_status_lock);
+        status = g_status;
+    }
+#ifdef _WIN32
+    wchar_t title[256];
+    if (guest) swprintf(title, 256, L"Hyrule Warriors: Definitive Edition (HWDER) - %.1f fps", fps);
+    else swprintf(title, 256, L"Hyrule Warriors: Definitive Edition (HWDER) - %hs", status.c_str());
+    SetWindowTextW(g_hwnd, title);
+#else
+    char title[256];
+    if (guest) snprintf(title, sizeof(title), "Hyrule Warriors: Definitive Edition (HWDER) - %.1f fps", fps);
+    else snprintf(title, sizeof(title), "Hyrule Warriors: Definitive Edition (HWDER) - %s", status.c_str());
+    auto* copy = new std::string(title);
+    if (!SDL_RunOnMainThread([](void* data) {
+        auto* text = static_cast<std::string*>(data); SDL_SetWindowTitle(g_hwnd, text->c_str()); delete text;
+    }, copy, false)) delete copy;
+#endif
+}
+
+// Record + submit one frame: clear, optionally blit `src`, present.
+static std::mutex g_present_queue_lock;
+
+// Returns the g_present_timeline value that marks this blit's completion, 0 when nothing read `src`.
+static u64 present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSemaphore wait_sem, u64 wait_value) {
+    std::lock_guard<std::mutex> pl(g_present_lock);
+    if (overlay::swapchain_dirty()) g_resize = true;
+    if (g_resize.exchange(false)) {
+        std::lock_guard<std::mutex> q(g_dev.queue_lock);
+        std::lock_guard<std::mutex> q2(g_present_queue_lock);
+        vkDeviceWaitIdle(g_dev.dev);
+        create_swapchain();
+    }
+    if (!g_swapchain || !g_extent.width) return 0;
+    FrameSync& fs = g_frames[g_frame_idx];
+    g_frame_idx = (g_frame_idx + 1) % 3;
+    if (!fs.fence) {
+        VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        vkCreateSemaphore(g_dev.dev, &sci, nullptr, &fs.acquired);
+        vkCreateSemaphore(g_dev.dev, &sci, nullptr, &fs.rendered);
+        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        vkCreateFence(g_dev.dev, &fci, nullptr, &fs.fence);
+        VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        ai.commandPool = g_pool;
+        ai.commandBufferCount = 1;
+        vkAllocateCommandBuffers(g_dev.dev, &ai, &fs.cb);
+    }
+    host::Counter tf, ta, tb, tc;
+    host::counter_frequency(&tf);
+    host::counter(&ta);
+    vkWaitForFences(g_dev.dev, 1, &fs.fence, VK_TRUE, UINT64_MAX);
+    host::counter(&tb);
+    u32 idx;
+    // Bounded: a hidden/minimized window may never hand out an image; the game must not stall on it.
+    VkResult r = vkAcquireNextImageKHR(g_dev.dev, g_swapchain, 100000000ull, fs.acquired, VK_NULL_HANDLE, &idx);
+    host::counter(&tc);
+    g_trace_fence_ms = (tb.QuadPart - ta.QuadPart) * 1000.0 / tf.QuadPart;
+    g_trace_acq_ms = (tc.QuadPart - tb.QuadPart) * 1000.0 / tf.QuadPart;
+    if (g_trace_fence_ms > 20 || g_trace_acq_ms > 20)
+        hw_log("display: slow: swapchain fence wait %.0f ms, acquire %.0f ms (result %d)", g_trace_fence_ms, g_trace_acq_ms, (int)r);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+        g_resize = true;
+        return 0;
+    }
+    if (r == VK_TIMEOUT || r == VK_NOT_READY) return 0;
+    vkResetFences(g_dev.dev, 1, &fs.fence);
+    vkResetCommandBuffer(fs.cb, 0);
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    vkBeginCommandBuffer(fs.cb, &bi);
+    VkImage dst = g_images[idx];
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = dst;
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(fs.cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &b);
+    VkImageSubresourceRange rr{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(fs.cb, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &bg, 1, &rr);
+    if (src) {
+        // the blit overwrites part of the cleared image: order the two transfer writes
+        VkImageMemoryBarrier cb2 = b;
+        cb2.oldLayout = cb2.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        cb2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        cb2.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(fs.cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &cb2);
+        float s = std::min((float)g_extent.width / w, (float)g_extent.height / h);
+        s32 dw = (s32)(w * s), dh = (s32)(h * s);
+        s32 x0 = ((s32)g_extent.width - dw) / 2, y0 = ((s32)g_extent.height - dh) / 2;
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.srcOffsets[1] = {(s32)w, (s32)h, 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.dstOffsets[0] = {x0, y0, 0};
+        blit.dstOffsets[1] = {x0 + dw, y0 + dh, 1};
+        vkCmdBlitImage(fs.cb, src, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_LINEAR);
+    }
+    // overlay (F1 menu / frame-time readout) on top of the game image
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(fs.cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &b);
+    host::Counter pq0, pq1, pq2, pq3;
+    host::counter(&pq0);
+    overlay::render(fs.cb, dst, g_extent);
+    host::counter(&pq1);
+    b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask = 0;
+    vkCmdPipelineBarrier(fs.cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+                         nullptr, 0, nullptr, 1, &b);
+    vkEndCommandBuffer(fs.cb);
+    VkPipelineStageFlags ws[2] = {VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
+    VkSemaphore waits[2] = {fs.acquired, wait_sem};
+    u64 wait_values[2] = {0, wait_value};
+    VkTimelineSemaphoreSubmitInfo tsi{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+    tsi.waitSemaphoreValueCount = wait_sem ? 2 : 1;
+    tsi.pWaitSemaphoreValues = wait_values;
+    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO, &tsi};
+    si.waitSemaphoreCount = wait_sem ? 2 : 1;
+    si.pWaitSemaphores = waits;
+    si.pWaitDstStageMask = ws;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &fs.cb;
+    u64 ticket = ++g_present_seq;
+    if (g_rendered.size() < g_images.size()) {
+        VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        size_t old = g_rendered.size();
+        g_rendered.resize(g_images.size());
+        for (size_t i = old; i < g_rendered.size(); i++) vkCreateSemaphore(g_dev.dev, &sci, nullptr, &g_rendered[i]);
+    }
+    VkSemaphore rendered = g_rendered[idx];
+    VkSemaphore signals[2] = {rendered, g_present_timeline};
+    u64 signal_values[2] = {0, ticket};
+    tsi.signalSemaphoreValueCount = 2;
+    tsi.pSignalSemaphoreValues = signal_values;
+    si.signalSemaphoreCount = 2;
+    si.pSignalSemaphores = signals;
+    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &rendered;
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &g_swapchain;
+    pi.pImageIndices = &idx;
+    bool shared = g_dev.present_queue == g_dev.queue;
+    std::unique_lock<std::mutex> q(g_dev.queue_lock, std::defer_lock);
+    std::unique_lock<std::mutex> q2(g_present_queue_lock, std::defer_lock);
+    if (shared) q.lock();
+    else q2.lock();
+    VKCHECK(vkQueueSubmit(g_dev.present_queue, 1, &si, fs.fence));
+    host::counter(&pq2);
+    r = vkQueuePresentKHR(g_dev.present_queue, &pi);
+    host::counter(&pq3);
+    if ((pq3.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart > 20.0)
+        hw_log("display: slow: present body %.0f ms (overlay %.0f, record+submit %.0f, queue-present %.0f)",
+               (pq3.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart, (pq1.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart,
+               (pq2.QuadPart - pq1.QuadPart) * 1000.0 / tf.QuadPart, (pq3.QuadPart - pq2.QuadPart) * 1000.0 / tf.QuadPart);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) g_resize = true;
+    return src ? ticket : 0;
+}
+
+u64 last_present_ticket() { return g_last_image_ticket.load(); }
+
+bool wait_present_done(u64 ticket, u64 timeout_ns) {
+    if (!ticket || !g_present_timeline) return true;
+    VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+    wi.semaphoreCount = 1;
+    wi.pSemaphores = &g_present_timeline;
+    wi.pValues = &ticket;
+    VkResult result = vkWaitSemaphores(g_dev.dev, &wi, timeout_ns);
+    if (result != VK_SUCCESS && result != VK_TIMEOUT) {
+        hw_log("display: presentation timeline wait failed (%d)", (int)result);
+        hw_fatal("Vulkan presentation wait failed");
+    }
+    return result == VK_SUCCESS;
+}
+
+void present_image(VkImage image, u32 width, u32 height, u32 swap_interval, VkSemaphore wait_sem, u64 wait_value,
+                   u32 release_hz) {
+    {
+        // Frame pacing statistics: interval between guest presents, logged every 300 frames.
+        static host::Counter freq, last;
+        static double sum = 0, worst = 0;
+        static u32 n = 0, slow = 0;
+        if (!freq.QuadPart) host::counter_frequency(&freq);
+        host::Counter now;
+        host::counter(&now);
+        if (last.QuadPart) {
+            double ms = (now.QuadPart - last.QuadPart) * 1000.0 / freq.QuadPart;
+            sum += ms;
+            worst = std::max(worst, ms);
+            if (ms > 20.0) slow++;
+            if (ms > 100.0) hw_log("display: slow frame (%.0f ms since the previous present)", ms);
+            if (++n == 300) {
+                hw_log("display: 300 frames: avg %.2f ms, worst %.1f ms, %u frames over 20 ms | per frame: present %.1f ms, limiter %.1f ms",
+                       sum / n, worst, slow, g_present_ms / n, g_limiter_ms / n);
+                sum = worst = 0;
+                n = slow = 0;
+                g_present_ms = g_limiter_ms = 0;
+            }
+        }
+        last = now;
+    }
+    g_last_guest_frame = now_ms();
+    VkClearColorValue black{};
+    host::Counter f, t0, t1, t2;
+    host::counter_frequency(&f);
+    host::counter(&t0);
+    // Wait for the slot first, then present: the caller's work for the next output (frame
+    // interpolation replays) overlaps the wait instead of delaying the present.
+    frame_limit(swap_interval, release_hz);
+    host::counter(&t1);
+    g_last_image_ticket = present(image, width, height, black, wait_sem, wait_value);
+    update_title(true);
+    host::counter(&t2);
+    g_limiter_ms += (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
+    g_present_ms += (t2.QuadPart - t1.QuadPart) * 1000.0 / f.QuadPart;
+    // HWDER_PACE_TRACE=1: one line per present (interval since the previous present call, requested swap
+    // interval, fence wait / acquire / whole present() / limiter time) for frame pacing analysis.
+    static const bool trace = debug::flag(debug::PaceTrace);
+    if (trace) {
+        static host::Counter prev;
+        double dt = prev.QuadPart ? (t0.QuadPart - prev.QuadPart) * 1000.0 / f.QuadPart : 0;
+        prev = t0;
+        hw_log("pace: present dt %.2f iv %u fence %.2f acq %.2f present %.2f limit %.2f overshoot %.2f", dt, swap_interval,
+               g_trace_fence_ms, g_trace_acq_ms, (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart,
+               (t2.QuadPart - t1.QuadPart) * 1000.0 / f.QuadPart, g_trace_overshoot_ms);
+    }
+}
+
+void set_status(const std::string& s) {
+    std::lock_guard<std::mutex> g(g_status_lock);
+    g_status = s;
+}
+
+// Boot screen: shown until the game presents its first frame.
+static void boot_screen_thread() {
+    for (;;) {
+        // Only before the first guest frame: afterwards a stall (loading, shader compiles) keeps the
+        // last game frame on screen instead of flashing back to the boot colour.
+        if (g_last_guest_frame.load() == 0 && now_ms() - g_last_guest_frame > 1000) {
+            float t = (float)(now_ms() % 4000) / 4000.0f;
+            float pulse = 0.5f + 0.5f * sinf(t * 6.2831853f);
+            VkClearColorValue c{};
+            c.float32[0] = 0.02f + 0.03f * pulse;
+            c.float32[1] = 0.05f + 0.05f * pulse;
+            c.float32[2] = 0.10f + 0.08f * pulse;
+            c.float32[3] = 1.0f;
+            present(VK_NULL_HANDLE, 0, 0, c, VK_NULL_HANDLE, 0);
+            update_title(false);
+        }
+        host::sleep_ms(16);
+    }
+}
+
+void init() {
+#ifndef _WIN32
+    if (!SDL_IsMainThread()) { on_main_thread([] { init(); }); return; }
+#endif
+    // Frame pacing relies on ~1 ms timer accuracy. Request it, and opt out of Windows 11's timer
+    // coarsening for processes whose window is not in the foreground / minimized (test runs, or the
+    // user alt-tabbing away while the game keeps running).
+#ifdef _WIN32
+    timeBeginPeriod(1);
+#endif
+#ifdef PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+    PROCESS_POWER_THROTTLING_STATE pt{};
+    pt.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    pt.ControlMask = PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+    pt.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &pt, sizeof(pt));
+#endif
+    settings::load();
+#ifdef _WIN32
+    std::thread(window_thread).detach();
+    while (!g_window_ready) host::sleep_ms(1);
+#else
+    window_thread();
+#endif
+    init_vulkan();
+    overlay::init(g_hwnd, g_dev.instance, g_dev.phys, g_dev.dev, g_dev.queue_family, g_dev.present_queue, VK_FORMAT_B8G8R8A8_UNORM);
+    if (!g_images.empty()) overlay::on_swapchain(g_images, VK_FORMAT_B8G8R8A8_UNORM);
+    apply_window_settings();
+    hw_log("display: window open");
+}
+
+void start() {
+    if (settings::video().display_60hz) apply_refresh_rate();
+    std::thread(boot_screen_thread).detach();
+}
+
+void present_overlay_frame() {
+    VkClearColorValue bg{};
+    bg.float32[0] = 0.035f;
+    bg.float32[1] = 0.04f;
+    bg.float32[2] = 0.05f;
+    bg.float32[3] = 1.0f;
+    present(VK_NULL_HANDLE, 0, 0, bg, VK_NULL_HANDLE, 0);
+}
+
+#ifdef _WIN32
+HWND window() { return g_hwnd; }
+#else
+SDL_Window* window() { return g_hwnd; }
+#endif
+
+}  // namespace display

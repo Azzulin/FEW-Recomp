@@ -1,0 +1,643 @@
+#include "host/sampler.h"
+#include "host/timing.h"
+// vi: display service. IHOSBinderDriver speaks android's IGraphicBufferProducer protocol over
+// parcels; queued buffers are composited (presented) by our compositor thread at the swap interval.
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+
+#include "gpu.h"
+#include "nvdrv_device.h"
+#include "service/common.h"
+#include "interp/interp.h"
+#include "debug_flags.h"
+#include "perf_stats.h"
+
+
+namespace ipc {
+namespace {
+
+// ------------------------------------------------------------------ parcels
+class ParcelReader {
+public:
+    ParcelReader(const u8* buf, u64 size) {
+        if (!buf || size < 16) return;
+        u32 data_size = *(const u32*)buf, data_off = *(const u32*)(buf + 4);
+        if (data_off + data_size > size) data_size = (u32)(size - data_off);
+        p_ = buf + data_off;
+        end_ = p_ + data_size;
+    }
+    template <typename T>
+    T read() {
+        T v{};
+        if (p_ + sizeof(T) <= end_) memcpy(&v, p_, sizeof(T));
+        p_ += (sizeof(T) + 3) & ~3ull;
+        return v;
+    }
+    void read_bytes(void* dst, u64 n) {
+        if (p_ + n <= end_) memcpy(dst, p_, n);
+        p_ += (n + 3) & ~3ull;
+    }
+    void skip_token() {  // u32 strict mode policy, then String16 interface name
+        read<u32>();
+        u32 len = read<u32>();
+        if (len != 0xFFFFFFFF) p_ += ((len + 1) * 2 + 3) & ~3ull;
+    }
+    // Flattened object: u32 size, u32 fd count, then the object.
+    template <typename T>
+    T read_flattened() {
+        u32 len = read<u32>();
+        read<u32>();
+        T v{};
+        if (p_ + len <= end_) memcpy(&v, p_, std::min<u64>(len, sizeof(T)));
+        p_ += (len + 3) & ~3ull;
+        return v;
+    }
+
+private:
+    const u8* p_ = nullptr;
+    const u8* end_ = nullptr;
+};
+
+class ParcelWriter {
+public:
+    template <typename T>
+    void write(const T& v) {
+        const u8* b = (const u8*)&v;
+        data_.insert(data_.end(), b, b + sizeof(T));
+        while (data_.size() & 3) data_.push_back(0);
+    }
+    void write_bytes(const void* p, u64 n) {
+        const u8* b = (const u8*)p;
+        data_.insert(data_.end(), b, b + n);
+        while (data_.size() & 3) data_.push_back(0);
+    }
+    template <typename T>
+    void write_flattened(const T& v) {
+        write<u32>(sizeof(T));
+        write<u32>(0);
+        write(v);
+    }
+    // A binder object: data plus an entry in the object offset table.
+    template <typename T>
+    void write_interface(const T& v) {
+        objects_.push_back((u32)data_.size());
+        write(v);
+    }
+    // Serialize into the guest buffer: header {data_size, data_offset, objects_size, objects_offset}.
+    u64 serialize(u8* out, u64 cap) const {
+        u32 obj_size = (u32)objects_.size() * 4;
+        u32 hdr[4] = {(u32)data_.size(), 0x10, obj_size, 0x10 + (u32)data_.size()};
+        u64 total = 0x10 + data_.size() + obj_size;
+        if (out && cap >= total) {
+            memcpy(out, hdr, 0x10);
+            memcpy(out + 0x10, data_.data(), data_.size());
+            memcpy(out + 0x10 + data_.size(), objects_.data(), obj_size);
+        } else if (out) {
+            hw_log("vi: parcel buffer too small (%llu < %llu)", (unsigned long long)cap, (unsigned long long)total);
+        }
+        return total;
+    }
+
+private:
+    std::vector<u8> data_;
+    std::vector<u32> objects_;
+};
+
+struct NvFence {
+    u32 id, value;
+};
+struct NvMultiFence {
+    u32 num_fences;
+    NvFence fences[4];
+};
+static_assert(sizeof(NvMultiFence) == 0x24);
+
+#pragma pack(push, 4)
+struct QueueBufferInput {
+    s64 timestamp;
+    s32 is_auto_timestamp;
+    s32 crop_left, crop_top, crop_right, crop_bottom;
+    s32 scaling_mode;
+    u32 transform;
+    u32 sticky_transform;
+    u32 pad;
+    u32 swap_interval;
+    NvMultiFence fence;
+};
+#pragma pack(pop)
+static_assert(sizeof(QueueBufferInput) == 0x54);
+
+struct QueueBufferOutput {
+    u32 width, height, transform_hint, num_pending_buffers;
+};
+
+// android::NvGraphicBuffer (flattened as an object)
+struct NvGraphicBuffer {
+    u32 magic;
+    s32 width, height, stride, format, usage;
+    u32 pad0;
+    u32 index;
+    u32 pad1[3];
+    u32 buffer_id;
+    u32 pad2[6];
+    u32 external_format;
+    u32 pad3[10];
+    u32 nvmap_handle;
+    u32 offset;
+    u32 pad4[60];
+};
+static_assert(sizeof(NvGraphicBuffer) == 0x16C);
+
+// ------------------------------------------------------------------ buffer queue + compositor
+constexpr int kSlots = 64;
+enum class SlotState { Free, Dequeued, Queued, Acquired };
+
+struct Slot {
+    SlotState state = SlotState::Free;
+    bool has_buffer = false;
+    NvGraphicBuffer buffer{};
+    u64 frame = 0;
+    u64 present_ticket = 0;  // display blit that last read this buffer (display::wait_present_done)
+};
+
+struct Queued {
+    int slot;
+    QueueBufferInput in;
+    u32 release_hz = 0;  // immutable pacing metadata captured before compositor execution
+};
+
+// A timeout is diagnostic, never proof that the guest may overwrite a pending display-blit source.
+// Device loss is handled by display::wait_present_done's fatal path; a genuine stall stays acquired
+// until completion or process shutdown (the window close handler terminates detached workers).
+void wait_screen_read(u64 ticket, int slot) {
+    u64 waited = 0;
+    while (!display::wait_present_done(ticket, 1000000000ull)) {
+        if (++waited == 1 || waited % 10 == 0)
+            hw_log("vi: screen blit of slot %d not finished after %llu s - still waiting", slot,
+                   (unsigned long long)waited);
+    }
+}
+
+class BufferQueue {
+public:
+    BufferQueue() {
+        thread_ = std::thread([this] { compositor(); });
+        thread_.detach();
+    }
+
+    std::shared_ptr<kern::ReadableEvent> buffer_event = make_event(true);
+
+    void transact(u32 code, ParcelReader& in, ParcelWriter& out) {
+        in.skip_token();
+        s32 status = 0;
+        switch (code) {
+        case 1: {  // RequestBuffer(slot)
+            s32 slot = in.read<s32>();
+            std::lock_guard<std::mutex> l(m_);
+            bool ok = slot >= 0 && slot < kSlots && slots_[slot].has_buffer;
+            out.write<s32>(ok ? 1 : 0);
+            if (ok) out.write_flattened(slots_[slot].buffer);
+            break;
+        }
+        case 2: {  // SetBufferCount
+            in.read<s32>();
+            break;
+        }
+        case 3: {  // DequeueBuffer(async, w, h, format, usage)
+            in.read<u32>();
+            u32 w = in.read<u32>(), h = in.read<u32>();
+            (void)w, (void)h;
+            int slot = dequeue();
+            out.write<s32>(slot);
+            NvMultiFence f{};
+            out.write_flattened(f);
+            if (slot < 0) status = -11;  // WOULD_BLOCK
+            break;
+        }
+        case 4: {  // DetachBuffer(slot)
+            s32 slot = in.read<s32>();
+            std::lock_guard<std::mutex> l(m_);
+            if (slot >= 0 && slot < kSlots) slots_[slot] = Slot{};
+            break;
+        }
+        case 7: {  // QueueBuffer(slot, QueueBufferInput)
+            s32 slot = in.read<s32>();
+            QueueBufferInput qbi = in.read_flattened<QueueBufferInput>();
+            perf::note_present();
+            // Sampler/idle-trace phases: split MainThread's present into before and after QueueBuffer.
+            if (host::g_sample_phase == 3) host::set_sample_phase(5);
+            else if (host::g_sample_phase == 4) host::set_sample_phase(6);
+            host::timeline("queue buffer", (unsigned long long)slot);
+            {
+                std::lock_guard<std::mutex> l(m_);
+                if (slot >= 0 && slot < kSlots) {
+                    slots_[slot].state = SlotState::Queued;
+                    queue_.push_back({slot, qbi, hw_game_interp_release_hz()});
+                }
+            }
+            cv_.notify_all();
+            QueueBufferOutput qbo{width_, height_, 0, (u32)pending()};
+            if (pace_trace()) {
+                static host::Counter freq, prev;
+                if (!freq.QuadPart) host::counter_frequency(&freq);
+                host::Counter now;
+                host::counter(&now);
+                hw_log("pace: queue slot %d dt %.2f produce %.2f iv %u fence %u:%u (value %u) pending %u", slot,
+                       prev.QuadPart ? (now.QuadPart - prev.QuadPart) * 1000.0 / freq.QuadPart : 0.0,
+                       (now.QuadPart - last_dequeue_.QuadPart) * 1000.0 / freq.QuadPart, qbi.swap_interval,
+                       qbi.fence.num_fences ? qbi.fence.fences[0].id : 0, qbi.fence.num_fences ? qbi.fence.fences[0].value : 0,
+                       qbi.fence.num_fences ? nv::syncpoint_read(qbi.fence.fences[0].id) : 0, qbo.num_pending_buffers);
+                prev = now;
+            }
+            out.write(qbo);
+            break;
+        }
+        case 8: {  // CancelBuffer(slot, fence)
+            s32 slot = in.read<s32>();
+            {
+                std::lock_guard<std::mutex> l(m_);
+                if (slot >= 0 && slot < kSlots) slots_[slot].state = SlotState::Free;
+            }
+            cv_.notify_all();
+            buffer_event->signal();
+            break;
+        }
+        case 9: {  // Query(what)
+            s32 what = in.read<s32>();
+            s32 v = 0;
+            switch (what) {
+            case 0: v = (s32)width_; break;
+            case 1: v = (s32)height_; break;
+            case 2: v = 1; break;           // RGBA_8888
+            case 3: v = 1; break;           // MIN_UNDEQUEUED_BUFFERS
+            case 4: v = 1; break;           // QUEUES_TO_WINDOW_COMPOSER
+            default: v = 0; break;
+            }
+            out.write<s32>(v);
+            break;
+        }
+        case 10: {  // Connect(listener?, api, controlled_by_app)
+            QueueBufferOutput qbo{width_, height_, 0, 0};
+            out.write(qbo);
+            break;
+        }
+        case 11:  // Disconnect
+            break;
+        case 14: {  // SetPreallocatedBuffer(slot, has_buffer?, buffer)
+            s32 slot = in.read<s32>();
+            s32 has = in.read<s32>();
+            if (slot >= 0 && slot < kSlots) {
+                std::lock_guard<std::mutex> l(m_);
+                if (has) {
+                    NvGraphicBuffer gb = in.read_flattened<NvGraphicBuffer>();
+                    slots_[slot].buffer = gb;
+                    slots_[slot].has_buffer = true;
+                    slots_[slot].state = SlotState::Free;
+                    width_ = (u32)gb.width;
+                    height_ = (u32)gb.height;
+                    hw_log("vi: buffer slot %d = %dx%d stride %d format %d nvmap %u+0x%x", slot, gb.width, gb.height,
+                           gb.stride, gb.format, gb.nvmap_handle, gb.offset);
+                } else {
+                    slots_[slot] = Slot{};
+                }
+            }
+            buffer_event->signal();
+            break;
+        }
+        default:
+            hw_log("vi: IGraphicBufferProducer transaction %u not implemented", code);
+            break;
+        }
+        out.write<s32>(status);
+    }
+
+private:
+    int pending() {
+        std::lock_guard<std::mutex> l(m_);
+        return (int)queue_.size();
+    }
+
+    static bool pace_trace() {
+        static const bool t = debug::flag(debug::PaceTrace);
+        return t;
+    }
+
+    int dequeue() {
+        host::Counter t0;
+        host::counter(&t0);
+        host::timeline("dequeue");
+        std::unique_lock<std::mutex> l(m_);
+        for (;;) {
+            // Oldest-presented free slot first (round robin keeps triple buffering in order).
+            int best = -1;
+            for (int i = 0; i < kSlots; i++)
+                if (slots_[i].has_buffer && slots_[i].state == SlotState::Free &&
+                    (best < 0 || slots_[i].frame < slots_[best].frame))
+                    best = i;
+            if (best >= 0) {
+                slots_[best].state = SlotState::Dequeued;
+                host::timeline("dequeued", (unsigned long long)best);
+                if (!any_free_locked()) buffer_event->clear();
+                if (pace_trace()) {
+                    host::Counter freq, t1;
+                    host::counter_frequency(&freq);
+                    host::counter(&t1);
+                    last_dequeue_ = t1;
+                    hw_log("pace: dequeue slot %d waited %.2f", best, (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart);
+                }
+                return best;
+            }
+            perf::WaitScope ws(perf::kWaitDequeue);
+            if (!cv_.wait_for(l, std::chrono::seconds(2), [&] { return any_free_locked(); })) {
+                hw_log("vi: DequeueBuffer timed out (no free buffer)");
+                return -1;
+            }
+        }
+    }
+    bool any_free_locked() const {
+        for (const Slot& s : slots_)
+            if (s.has_buffer && s.state == SlotState::Free) return true;
+        return false;
+    }
+
+    void compositor() {
+        host::name_thread(L"HWDER compositor");
+        int presented = -1;
+        u64 frame = 0;
+        for (;;) {
+            Queued q;
+            NvGraphicBuffer gb;
+            {
+                std::unique_lock<std::mutex> l(m_);
+                cv_.wait(l, [&] { return !queue_.empty(); });
+                q = queue_.front();
+                queue_.pop_front();
+                slots_[q.slot].state = SlotState::Acquired;
+                gb = slots_[q.slot].buffer;
+            }
+            // Wait for rendering into the buffer to finish. Never present an unfinished buffer: when the GPU
+            // thread stalls for more than a second (shader builds, first-time ASTC decodes, frame dumps) a
+            // bounded wait would show half-drawn frames (UI layers without their text, clear-colour flashes).
+            for (u32 i = 0; i < std::min<u32>(q.in.fence.num_fences, 4); i++) {
+                int waited = 0;
+                while (!nv::syncpoint_wait(q.in.fence.fences[i].id, q.in.fence.fences[i].value, 1000000000ll)) {
+                    if (++waited == 1 || waited % 10 == 0)
+                        hw_log("vi: frame fence %u:%u not reached after %d s (value %u) - still waiting", q.in.fence.fences[i].id,
+                               q.in.fence.fences[i].value, waited, nv::syncpoint_read(q.in.fence.fences[i].id));
+                }
+            }
+            host::timeline("comp fence done", (unsigned long long)q.slot);
+            gpu::FramebufferInfo fb;
+            fb.address = nv::nvmap_address(gb.nvmap_handle) + gb.offset;
+            fb.width = (u32)gb.width;
+            fb.height = (u32)gb.height;
+            fb.stride = (u32)gb.stride;
+            fb.format = (u32)gb.format;
+            u32 gobs = ((u32)gb.height + 7) / 8, bh = 0;
+            while (bh < 4 && (1u << bh) < gobs) bh++;
+            fb.block_height_log2 = bh;
+            fb.block_linear = true;
+            fb.transform_flags = q.in.transform;
+            fb.crop_left = q.in.crop_left;
+            fb.crop_top = q.in.crop_top;
+            fb.crop_right = q.in.crop_right;
+            fb.crop_bottom = q.in.crop_bottom;
+            fb.swap_interval = q.in.swap_interval ? q.in.swap_interval : 1;
+            fb.release_hz = q.release_hz;
+            bool released = false;
+            auto release_now = [&](u64 ticket) {
+                {
+                    std::lock_guard<std::mutex> l(m_);
+                    if (presented >= 0 && presented != q.slot && slots_[presented].state == SlotState::Acquired)
+                        slots_[presented].state = SlotState::Free;
+                    slots_[q.slot].present_ticket = ticket;
+                    slots_[q.slot].frame = ++frame;
+                    slots_[q.slot].state = SlotState::Free;
+                    presented = -1;
+                    host::timeline("slot free", (unsigned long long)q.slot);
+                }
+                cv_.notify_all();
+                buffer_event->signal();
+                released = true;
+            };
+            // The presenter copies a 120 fps frame and the guest buffer goes back before the 120 Hz release wait:
+            // with only three buffers, holding them through that wait made the game wait for the grid each tick.
+            if (fb.release_hz) fb.on_captured = [&] { release_now(0); };
+            if (fb.address) gpu::renderer()->present(fb);
+            u64 ticket = fb.address ? display::last_present_ticket() : 0;
+            if (released) {
+                if (frame == 1) {
+                    hw_log("vi: first frame presented (%ux%u)", fb.width, fb.height);
+                    display::set_status("game running");
+                }
+                continue;
+            }
+            // Game-drawn extra frame (HWDER_GAME_INTERP): the buffer is free once its screen blit has run, so hand it back now
+            // instead of when the next frame arrives. The game can then queue two frames ahead (triple
+            // buffering), which absorbs a slow game tick at 120 Hz; the release grid still paces it.
+            if (fb.release_hz && ticket) {
+                wait_screen_read(ticket, q.slot);
+                release_now(ticket);
+                if (frame == 1) {
+                    hw_log("vi: first frame presented (%ux%u)", fb.width, fb.height);
+                    display::set_status("game running");
+                }
+                continue;
+            }
+            // The previous buffer goes back to the guest below. Its screen blit runs on the present queue, which
+            // nothing orders against the renderer's later writes, so wait until it has read the buffer: otherwise
+            // the guest can draw a later frame into it before it reaches the screen.
+            if (presented >= 0 && presented != q.slot) {
+                u64 prev_ticket;
+                {
+                    std::lock_guard<std::mutex> l(m_);
+                    prev_ticket = slots_[presented].present_ticket;
+                }
+                wait_screen_read(prev_ticket, presented);
+            }
+            {
+                std::lock_guard<std::mutex> l(m_);
+                slots_[q.slot].present_ticket = ticket;
+                if (presented >= 0 && presented != q.slot && slots_[presented].state == SlotState::Acquired)
+                    slots_[presented].state = SlotState::Free;
+                slots_[q.slot].frame = ++frame;
+                presented = q.slot;
+            }
+            cv_.notify_all();
+            buffer_event->signal();
+            if (frame == 1) {
+                hw_log("vi: first frame presented (%ux%u)", fb.width, fb.height);
+                display::set_status("game running");
+            }
+        }
+    }
+
+    std::mutex m_;
+    std::condition_variable cv_;
+    Slot slots_[kSlots];
+    std::deque<Queued> queue_;
+    std::thread thread_;
+    u32 width_ = 1280, height_ = 720;
+    host::Counter last_dequeue_{};  // HWDER_PACE_TRACE
+};
+
+BufferQueue& layer_queue() {
+    static BufferQueue* q = new BufferQueue;
+    return *q;
+}
+
+// ------------------------------------------------------------------ vsync
+std::shared_ptr<ReadableEvent> vsync_event() {
+    static std::shared_ptr<ReadableEvent> ev = [] {
+        auto e = make_event();
+        hw_log("vi: vsync event requested by the game");
+        std::thread([e] {
+            host::name_thread(L"HWDER vsync");
+            // The game's frame clock: its ticks must not be delayed by busy worker threads.
+#ifdef _WIN32
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#endif
+            host::Counter freq, next, now;
+            host::counter_frequency(&freq);
+            host::counter(&next);
+            const s64 period = freq.QuadPart / 60;
+            for (;;) {
+                next.QuadPart += period;
+                host::counter(&now);
+                s64 wait = next.QuadPart - now.QuadPart;
+                if (wait > 0) {
+                    host::sleep_counter_ticks(wait, freq.QuadPart);
+                } else if (wait < -period * 4) {
+                    next = now;
+                }
+                e->signal();
+            }
+        }).detach();
+        return e;
+    }();
+    return ev;
+}
+
+// ------------------------------------------------------------------ services
+constexpr s32 kBinderId = 1;
+
+class IHOSBinderDriver : public SimpleService {
+public:
+    IHOSBinderDriver() : SimpleService("IHOSBinderDriver") {
+        auto transact = [](Request& rq, Response&, Buffer in, Buffer out) {
+            s32 id = rq.pop<s32>();
+            u32 code = rq.pop<u32>();
+            ParcelReader pr((const u8*)in.addr, in.size);
+            ParcelWriter pw;
+            static const bool trace = debug::flag(debug::ViTrace);
+            if (trace) hw_log("vi: binder %d transact %u", id, code);
+            layer_queue().transact(code, pr, pw);
+            if (out.addr) pw.serialize((u8*)out.addr, out.size);
+        };
+        reg(0, [transact](Request& rq, Response& rs) {  // TransactParcel (A in, B out)
+            Buffer in = rq.a.empty() ? Buffer{} : rq.a[0];
+            Buffer out = rq.b.empty() ? Buffer{} : rq.b[0];
+            transact(rq, rs, in, out);
+        });
+        reg(3, [transact](Request& rq, Response& rs) {  // TransactParcelAuto (X/A in, C/B out)
+            transact(rq, rs, rq.in_buffer(0), rq.out_buffer(0));
+        });
+        nop({1});  // AdjustRefcount
+        reg(2, [](Request&, Response& rs) { push_handle(rs, layer_queue().buffer_event); });  // GetNativeHandle
+    }
+};
+
+class ISystemDisplayService : public SimpleService {
+public:
+    ISystemDisplayService() : SimpleService("ISystemDisplayService") {
+        ret<u64>(1200, 0);    // GetZOrderCountMin
+        ret<u64>(1202, 255);  // GetZOrderCountMax
+        reg(1203, [](Request&, Response& rs) {  // GetDisplayLogicalResolution
+            rs.push<s32>(1920);
+            rs.push<s32>(1080);
+        });
+        nop({2201, 2203, 2205, 2207, 2312});
+        ret<u64>(2204, 0);
+        reg(3200, [](Request&, Response& rs) {  // GetDisplayMode
+            rs.push<u32>(1920);
+            rs.push<u32>(1080);
+            rs.push<float>(60.0f);
+            rs.push<u32>(0);
+        });
+    }
+};
+
+class IManagerDisplayService : public SimpleService {
+public:
+    IManagerDisplayService() : SimpleService("IManagerDisplayService") {
+        ret<u64>(2010, 1);  // CreateManagedLayer
+        nop({2011, 2012, 6000, 6001, 6002, 6003, 6004, 7000});
+    }
+};
+
+u64 write_native_window(Request& rq) {
+    ParcelWriter pw;
+    struct {
+        u32 magic, process_id, id, pad[3];
+        char dispdrv[8];
+        u32 pad2[2];
+    } nw{2, 1, (u32)kBinderId, {}, "dispdrv", {}};
+    pw.write_interface(nw);
+    Buffer out = rq.out_buffer(0);
+    return pw.serialize((u8*)out.addr, out.size);
+}
+
+class IApplicationDisplayService : public SimpleService {
+public:
+    IApplicationDisplayService() : SimpleService("IApplicationDisplayService") {
+        obj(100, [] { return std::make_shared<IHOSBinderDriver>(); });
+        obj(101, [] { return std::make_shared<ISystemDisplayService>(); });
+        obj(102, [] { return std::make_shared<IManagerDisplayService>(); });
+        obj(103, [] { return std::make_shared<IHOSBinderDriver>(); });
+        reg(1000, [](Request& rq, Response& rs) {  // ListDisplays
+            struct {
+                char name[0x40];
+                u8 has_limited_layers;
+                u8 pad[7];
+                u64 max_layers, width, height;
+            } info{"Default", 1, {}, 1, 1920, 1080};
+            write_buffer(rq.out_buffer(), &info, sizeof(info));
+            rs.push<u64>(1);
+        });
+        reg(1010, [](Request&, Response& rs) { rs.push<u64>(0); });  // OpenDisplay
+        reg(1011, [](Request&, Response& rs) { rs.push<u64>(0); });  // OpenDefaultDisplay
+        nop({1020, 1101, 2021, 2031, 2101});
+        reg(1102, [](Request&, Response& rs) {  // GetDisplayResolution
+            rs.push<u64>(1920);
+            rs.push<u64>(1080);
+        });
+        reg(2020, [](Request& rq, Response& rs) {  // OpenLayer -> native window parcel
+            display::set_status("display layer open");
+            rs.push<u64>(write_native_window(rq));
+        });
+        reg(2030, [](Request& rq, Response& rs) {  // CreateStrayLayer -> layer id, parcel size
+            rs.push<u64>(1);
+            rs.push<u64>(write_native_window(rq));
+        });
+        reg(2102, [](Request& rq, Response& rs) { rs.push<u64>(rq.pop<u32>()); });  // ConvertScalingMode
+        reg(5202, [](Request&, Response& rs) { push_handle(rs, vsync_event()); });  // GetDisplayVsyncEvent
+        reg(5203, [](Request&, Response& rs) { push_handle(rs, vsync_event()); });
+    }
+};
+
+class ViRoot : public SimpleService {
+public:
+    explicit ViRoot(const char* name) : SimpleService(name) {
+        for (u32 id : {0u, 1u, 2u, 3u}) obj(id, [] { return std::make_shared<IApplicationDisplayService>(); });
+    }
+};
+
+}  // namespace
+
+void register_vi_services() {
+    for (const char* n : {"vi:m", "vi:s", "vi:u"}) register_service(n, [n] { return std::make_shared<ViRoot>(n); });
+}
+
+}  // namespace ipc

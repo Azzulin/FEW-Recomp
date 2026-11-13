@@ -1,0 +1,25 @@
+# Owned by the gpu subsystem. Paths relative to the repo root.
+list(APPEND RUNTIME_SOURCES
+    runtime/src/gpu/vk_loader.cpp
+    runtime/src/gpu/display.cpp
+    runtime/src/gpu/settings.cpp
+    runtime/src/gpu/diag.cpp
+    runtime/src/gpu/overlay.cpp
+    runtime/src/gpu/prelaunch.cpp
+    runtime/src/gpu/save_folder_ui.cpp
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_vulkan.cpp
+    runtime/src/gpu/services.cpp
+    runtime/src/gpu/nvdrv.cpp
+    runtime/src/gpu/gpu.cpp
+    runtime/src/gpu/vi.cpp
+)
+
+if(WIN32)
+    list(APPEND RUNTIME_SOURCES third_party/imgui/backends/imgui_impl_win32.cpp)
+else()
+    list(APPEND RUNTIME_SOURCES third_party/imgui/backends/imgui_impl_sdl3.cpp)
+endif()

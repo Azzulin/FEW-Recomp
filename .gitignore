@@ -1,0 +1,59 @@
+# ---- jogo, chaves e saves: NUNCA versionar ----
+*.nsp
+*.nsz
+*.xci
+*.keys
+*.tik
+/Game/
+data/
+save/
+save_reference/
+exefs/
+romfs/
+
+# codigo gerado a partir do dump do proprio usuario (tools/recomp)
+generated/
+
+# saidas de build e de execucao
+build/
+dist/
+/Jogar no PC/
+*.obj
+*.o
+*.pdb
+*.exe
+*.log
+*.dmp
+build_log*.txt
+pipeline_cache.bin
+pipeline_warmup.bin
+pipeline_catalog.bin
+cache/
+hwder_settings.ini
+extra_entries.txt
+!tools/recomp/extra_entries.txt
+!tools/recomp/*/extra_entries.txt
+!tools/recomp/games/*/extra_entries.txt
+runs/
+shots/
+legacy/
+*.bak
+
+# python
+*.pyc
+__pycache__/
+
+# third_party: arvores de terceiros copiadas nos commits fixados (ver third_party/README.md);
+# gerar-few.ps1 restaura as que faltarem
+/third_party/SDL/
+/third_party/imgui/
+/third_party/spirv-headers/
+/third_party/vulkan-headers/
+
+# lancadores locais com caminhos da maquina
+*.bat
+*.ps1
+!/gerar-few.ps1
+!tools/setup_ui/install_private_python.ps1
+!tools/tests/test_private_python.ps1
+!tools/screenshot.ps1
