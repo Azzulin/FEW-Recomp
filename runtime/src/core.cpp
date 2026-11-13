@@ -30,6 +30,7 @@
 #include "kernel/kernel.h"
 #include "service/ipc.h"
 #include "symbols.h"
+#include "hwder/game_profile.h"
 #include "gpu/display.h"
 #include "gpu/prelaunch.h"
 #include "gpu/renderer.h"
@@ -663,6 +664,7 @@ static void load_module(const HwModuleInfo& mi, const std::string& exefs) {
     // Experiment (HWDER_PATCH_DT=<hz>): the game's per-frame time step lives in two rodata floats
     // (1/60 s, plus 1/30 s for its half-rate mode). Rewriting them to 1/hz together with releasing
     // frames at hz tells us whether the simulation is dt-driven (then high refresh is feasible).
+#ifdef HW_ADDR_FrameDelta60a  // only when tools/recomp/symbols.txt names the game's frame-step constants
     if (!strcmp(mi.name, "main")) {
         if (const char* hz = debug::str(debug::PatchDt)) {
             float f = (float)atof(hz);
@@ -675,6 +677,7 @@ static void load_module(const HwModuleInfo& mi, const std::string& exefs) {
             }
         }
     }
+#endif
     u64 text_end = (seg[0].mem_off + seg[0].size + 0xFFF) & ~0xFFFull;
     u64 ro_end = (seg[1].mem_off + seg[1].size + 0xFFF) & ~0xFFFull;
     kern::mem::map(mi.base, text_end, kern::mem::Code, kern::mem::RX, false);
@@ -827,7 +830,7 @@ static int runtime_main(int argc, char** argv) {
         if (!dev && !debug::flag(debug::NoPrelaunch) && !automated)
             prelaunch = !nsp || !settings::launch().skip_prelaunch || shift || env_u8("HWDER_PRELAUNCH") == "1";
         if (!nsp && !have_dir && !prelaunch) {
-            std::string msg = err.empty() ? "No game data found.\n\nPut your own dump of Hyrule Warriors: Definitive Edition "
+            std::string msg = err.empty() ? "No game data found.\n\nPut your own dump of " HW_GAME_NAME " "
                                             "(the .nsp) and your prod.keys next to hwder.exe.\n\n(Looked for *.nsp in: " + dir + ")"
                                           : "Cannot load the game from the NSP:\n\n" + err;
             hw_log("boot: %s", msg.c_str());

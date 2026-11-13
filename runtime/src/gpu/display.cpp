@@ -2,6 +2,7 @@
 #include "gpu/overlay.h"
 #include "gpu/settings.h"
 #include "display.h"
+#include "hwder/game_profile.h"
 
 #ifdef _WIN32
 #include <timeapi.h>
@@ -169,7 +170,7 @@ static void window_thread() {
         x = vd.left + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;  // right of every monitor
         y = vd.top + 64;
     }
-    g_hwnd = CreateWindowExW(offscreen ? WS_EX_NOACTIVATE : 0, L"HWDER", L"Hyrule Warriors: Definitive Edition (HWDER)",
+    g_hwnd = CreateWindowExW(offscreen ? WS_EX_NOACTIVATE : 0, L"HWDER", L"" HW_GAME_NAME,
                              WS_OVERLAPPEDWINDOW, x, y, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance,
                              nullptr);
     // Automated test runs (they set HWDER_LOG) open minimized without stealing focus.
@@ -210,7 +211,7 @@ static void set_display_60hz(SDL_Window* window, bool on) {
 static void window_thread() {
     auto flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (getenv("HWDER_OFFSCREEN")) flags |= SDL_WINDOW_HIDDEN;
-    g_hwnd = SDL_CreateWindow("Hyrule Warriors: Definitive Edition (HWDER)", 1280, 720, flags);
+    g_hwnd = SDL_CreateWindow(HW_GAME_NAME, 1280, 720, flags);
     if (!g_hwnd) hw_fatal(SDL_GetError());
     host::set_media_focus((SDL_GetWindowFlags(g_hwnd) & SDL_WINDOW_INPUT_FOCUS) != 0);
     update_window_metrics(); g_window_ready = true;
@@ -757,13 +758,13 @@ static void update_title(bool guest) {
     }
 #ifdef _WIN32
     wchar_t title[256];
-    if (guest) swprintf(title, 256, L"Hyrule Warriors: Definitive Edition (HWDER) - %.1f fps", fps);
-    else swprintf(title, 256, L"Hyrule Warriors: Definitive Edition (HWDER) - %hs", status.c_str());
+    if (guest) swprintf(title, 256, L"" HW_GAME_NAME " - %.1f fps", fps);
+    else swprintf(title, 256, L"" HW_GAME_NAME " - %hs", status.c_str());
     SetWindowTextW(g_hwnd, title);
 #else
     char title[256];
-    if (guest) snprintf(title, sizeof(title), "Hyrule Warriors: Definitive Edition (HWDER) - %.1f fps", fps);
-    else snprintf(title, sizeof(title), "Hyrule Warriors: Definitive Edition (HWDER) - %s", status.c_str());
+    if (guest) snprintf(title, sizeof(title), HW_GAME_NAME " - %.1f fps", fps);
+    else snprintf(title, sizeof(title), HW_GAME_NAME " - %s", status.c_str());
     auto* copy = new std::string(title);
     if (!SDL_RunOnMainThread([](void* data) {
         auto* text = static_cast<std::string*>(data); SDL_SetWindowTitle(g_hwnd, text->c_str()); delete text;

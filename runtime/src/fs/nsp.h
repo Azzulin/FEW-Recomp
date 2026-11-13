@@ -7,15 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "hwder/game_profile.h"
+
 namespace hwfs::nsp {
 
-// Hyrule Warriors: Definitive Edition's application (program) ID, as in kernel.h and docs/playing.md.
-constexpr uint64_t kTitleId = 0x0100AE00096EA000ull;
-// The Japanese release (GitHub issue #3). Recognized, not tested: it runs only on a build Prepared from its own
-// modules. Saves keep the international title's folder.
-constexpr uint64_t kTitleIdJp = 0x01002AB007FD2000ull;
-// The NSP in use is the Japanese release.
-bool is_japanese();
+// The game's application (program) ID (hwder/game_profile.h).
+constexpr uint64_t kTitleId = HW_GAME_TITLE_ID;
 
 // Paths picked on the startup screen (empty = search). Used after HWDER_NSP / HWDER_KEYS and before
 // the automatic search; a set path that does not exist counts as missing, with no fallback.

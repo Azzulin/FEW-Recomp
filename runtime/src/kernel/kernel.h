@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "hwder/game_profile.h"
 #include "hwder/runtime.h"
 
 namespace kern {
@@ -183,7 +184,7 @@ u64 alloc_system(u64 size);  // kernel-owned guest-visible memory
 
 // ------------------------------------------------------------------ process info
 struct ProcessInfo {
-    u64 title_id = 0x0100AE00096EA000ull;
+    u64 title_id = HW_GAME_TITLE_ID;
     u32 main_thread_priority = 44;
     u32 main_thread_core = 0;
     u32 main_thread_stack = 0x100000;

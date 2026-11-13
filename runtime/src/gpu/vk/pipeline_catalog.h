@@ -5,12 +5,13 @@
 #include <functional>
 #include <string>
 #include "gpu/vk/pipeline_warmup_cache.h"
+#include "hwder/game_profile.h"
 
 namespace gpu::catalog {
 using Digest = std::array<u8, 32>;
 constexpr size_t kMaxBytes = 16 * 1024 * 1024;
 constexpr u32 kMaxSourceBytes = 0x100050;
-constexpr u64 kTitleId = 0x0100AE00096EA000ull;
+constexpr u64 kTitleId = HW_GAME_TITLE_ID;
 struct Locator {
     std::string resource;  // relative RomFS filename; never a host path
     u64 offset = 0;        // SPH offset inside the uncompressed NVN resource

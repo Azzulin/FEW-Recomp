@@ -16,6 +16,7 @@
 #include "gpu/display.h"
 #include "gpu/settings.h"
 #include "debug_flags.h"
+#include "hwder/game_profile.h"
 
 namespace hwfs {
 
@@ -122,7 +123,7 @@ bool resolve_save_file(const std::string& file, std::string& root, std::string& 
 
 bool is_save_file_folder(const std::string& dir) {
     std::error_code ec;
-    return fsys::is_regular_file(fsys::path(long_path(dir)) / "zmha.bin", ec);
+    return fsys::is_regular_file(fsys::path(long_path(dir)) / HW_GAME_SAVE_MAIN, ec);
 }
 
 HostPath active_save_root() {
@@ -254,13 +255,13 @@ bool copy_saves(const std::string& from, const std::string& to, std::string& rep
 }
 
 bool import_save(const std::string& from, const std::string& root, std::string& report) {
-    const fsys::path sub = fsys::path("0100AE00096EA000") / "48574445525F55530000000000000001";
+    const fsys::path sub = fsys::path(HW_GAME_TITLE_ID_STR) / "48574445525F55530000000000000001";
     const std::string leaf = display_path(HostPath(normalize(root)) / sub);
     if (inside(leaf, from) || inside(from, leaf) || same_dir(from, leaf)) {
         report = "That save is already in the save folder.";
         return false;
     }
-    return copy_files(from, root, sub, {"zmha.bin", "zmhasd.bin"}, report);
+    return copy_files(from, root, sub, {HW_GAME_SAVE_MAIN, HW_GAME_SAVE_SIDE}, report);
 }
 
 void run_pending_save_copy() {

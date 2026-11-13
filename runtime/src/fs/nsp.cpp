@@ -708,13 +708,11 @@ bool init(const std::string& exe_dir, std::string& error) {
     inf.has_version = read_cnmt_version(*st, files, inf.title_id, inf.version);
     if (inf.has_version) hw_log("nsp: version %u", inf.version);
     if (inf.has_version) inf.title_source += " (matches the CNMT)";
-    if (inf.title_id == kTitleIdJp) {
-        hw_log("nsp: Japanese release (title %016llX)", (unsigned long long)inf.title_id);
-    } else if (inf.title_id != kTitleId) {
+    if (inf.title_id != kTitleId) {
         // Updates are the base ID | 0x800; add-on content is the base ID + 0x1000 + index.
         const char* what = inf.title_id == (kTitleId | 0x800) ? "an update, not the base game"
                          : (inf.title_id & ~0xFFFull) == kTitleId + 0x1000 ? "add-on content (DLC), not the base game"
-                                                                          : "not Hyrule Warriors: Definitive Edition";
+                                                                          : "not " HW_GAME_NAME " (JP)";
         // Not a gate: warn and still serve the file, the user may know better (a re-packed or modded dump).
         char why[512];
         snprintf(why, sizeof(why), "title %016llX from the %s is %s (expected %016llX)", (unsigned long long)inf.title_id,
@@ -765,8 +763,6 @@ bool init(const std::string& exe_dir, std::string& error) {
 
 bool active() { return g_state != nullptr; }
 
-bool is_japanese() { return g_state && g_info.title_id == kTitleIdJp; }
-
 const std::string& path() {
     static std::string none;
     return g_state ? g_state->path : none;
@@ -774,12 +770,14 @@ const std::string& path() {
 
 bool read_exefs(const char* name, std::vector<u8>& out) {
     if (!g_state) return false;
-    if (g_state->update) {  // the update's own modules (main, main.npdm) replace the base game's
+    if (g_state->update) {
+        // With the update, its ExeFS (unpacked whole by tools/game_update.py) is the only one: Fire Emblem Warriors
+        // 1.5.0 has a different module set than the base game (SDK 3.7.0, 5 modules instead of 8), so a module the
+        // update lacks must not come from the base game.
         File f;
-        if (f.open(g_state->update->dir + kSep + "exefs" + kSep + name)) {
-            out.resize(f.size());
-            return f.read(0, out.data(), out.size());
-        }
+        if (!f.open(g_state->update->dir + kSep + "exefs" + kSep + name)) return false;
+        out.resize(f.size());
+        return f.read(0, out.data(), out.size());
     }
     for (const PfsEntry& e : g_state->exefs_files)
         if (e.name == name) {
@@ -791,8 +789,17 @@ bool read_exefs(const char* name, std::vector<u8>& out) {
 
 std::vector<std::string> exefs_files() {
     std::vector<std::string> v;
-    if (g_state)
-        for (auto& e : g_state->exefs_files) v.push_back(e.name);
+    if (!g_state) return v;
+    if (g_state->update) {
+        static const char* const kNames[] = {"rtld",    "main",    "main.npdm", "sdk",     "subsdk0", "subsdk1", "subsdk2",
+                                             "subsdk3", "subsdk4", "subsdk5",   "subsdk6", "subsdk7", "subsdk8", "subsdk9"};
+        for (const char* n : kNames) {
+            File f;
+            if (f.open(g_state->update->dir + kSep + "exefs" + kSep + n)) v.push_back(n);
+        }
+        return v;
+    }
+    for (auto& e : g_state->exefs_files) v.push_back(e.name);
     return v;
 }
 

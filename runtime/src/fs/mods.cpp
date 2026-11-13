@@ -12,6 +12,7 @@
 #include "debug_flags.h"
 #include "fs_internal.h"
 #include "gpu/settings.h"
+#include "hwder/game_profile.h"
 
 namespace hwfs::mods {
 
@@ -19,7 +20,7 @@ namespace {
 
 namespace fsys = std::filesystem;
 
-constexpr const char* kTitleRomfs = "0100AE00096EA000";
+constexpr const char* kTitleRomfs = HW_GAME_TITLE_ID_STR;
 
 // Native host path for a UTF-8 folder: absolute, no trailing separator, long-path form on Windows.
 HostPath host_dir(const std::string& dir) {

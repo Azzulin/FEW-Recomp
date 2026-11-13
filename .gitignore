@@ -5,6 +5,7 @@
 *.keys
 *.tik
 /Game/
+/Game Files/
 data/
 save/
 save_reference/

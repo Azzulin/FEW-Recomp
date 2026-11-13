@@ -1,31 +1,15 @@
 {
   "profiles": [
     {
-      "id": "hwde-0100ae00096ea000-tested-base",
-      "title_id": "0100ae00096ea000",
-      "note": "Exact five-module set used by tested main 1c8ee53; no display-version inference or asset-integrity claim.",
+      "id": "few-0100f15003e64000-update-1.5.0",
+      "title_id": "0100f15003e64000",
+      "note": "Fire Emblem Warriors (US) base v0 RomFS + update 1.5.0 (0100F15003E64800, v327680). The update's whole ExeFS is the recompiled code (SDK 3.7.0, five modules).",
       "modules_sha256": {
-        "main": "2bf9bd65f0c196a1217da0f91c7e6c11c866d1a45364f8adf5840abc2f5e029a",
-        "rtld": "3522d56dda056d4c7ba6f9508d6d1805d9a751b5a189a8700f9714ce06fb6c5a",
-        "sdk": "3997a78d8c907cab470bd7fd793d1d806c7fec44239b73a456e545597808b81e",
-        "subsdk0": "17a8bd4c66350ea483f93ca83ac4ad2c991f195de90b8904c1ffcc45f10f8715",
-        "subsdk1": "f9f05fa500561893e2133b9de8131776126f78e1d5c2c542e7d594046b844e3e"
-      }
-    },
-    {
-      "id": "hwde-0100ae00096ea000-update-1.0.1",
-      "title_id": "0100ae00096ea000",
-      "note": "Base game plus update 1.0.1 (0100AE00096EA800, v65536): only main differs. Symbols remapped by tools/recomp/remap_symbols.py.",
-      "modules_sha256": {
-        "main": "6fe1f0581a06d09f8f3dccc75ffcbffb5ea35c79e6a57ed56e9de9734affde62",
-        "rtld": "3522d56dda056d4c7ba6f9508d6d1805d9a751b5a189a8700f9714ce06fb6c5a",
-        "sdk": "3997a78d8c907cab470bd7fd793d1d806c7fec44239b73a456e545597808b81e",
-        "subsdk0": "17a8bd4c66350ea483f93ca83ac4ad2c991f195de90b8904c1ffcc45f10f8715",
-        "subsdk1": "f9f05fa500561893e2133b9de8131776126f78e1d5c2c542e7d594046b844e3e"
-      },
-      "recomp": {
-        "symbols": "tools/recomp/v1.0.1/symbols.txt",
-        "extra": ["tools/recomp/v1.0.1/extra_entries.txt"]
+        "main": "735833f00f482595c4b89177e985e5a49a502c72d0dae46b0e8eea2dab1ea4ad",
+        "rtld": "e6e39e21a9d05d0d0b9693f8658892507cf3f8935bb8e8a7930c5c340af76091",
+        "sdk": "4d269e54ea6a95eeb9045750c4371d6e6986b99f062271ba6340bef7551b5bd4",
+        "subsdk0": "de26133892962b63b0f27387cecaaf9c809f82ec7a9fad4d80f92688f512ce87",
+        "subsdk1": "7935ed35fab7f944757cdf6761f5f9ca7c1ff04b0eee95e7f89b379fa7244737"
       }
     }
   ]

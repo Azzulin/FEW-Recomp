@@ -1,9 +1,11 @@
-"""Unpack the game's update (1.0.1, title 0100AE00096EA800) from the user's own .nsp or .nsz into a private folder.
+"""Unpack the game's update (tools/game_profile.py: 1.5.0, title 0100F15003E64800) from the user's own .nsp or .nsz
+into a private folder.
 
     python tools/game_update.py <update.nsp|.nsz> <prod.keys> <out dir>
 
 The output is what the runtime and the generator need, decrypted, and nothing else:
-  exefs/main, exefs/main.npdm   the update's main module (the other modules are the base game's, unchanged)
+  exefs/*                       the update's whole ExeFS. It replaces the base game's: Fire Emblem Warriors 1.5.0 was
+                                rebuilt on SDK 3.7.0 with a different module set (5 modules instead of the base's 8)
   romfs.patch                   the update's RomFS section: BKTR tables plus patch data, decrypted
   update.json                   title, version, and where the tables and the patched RomFS live in romfs.patch
 
@@ -21,9 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nx_extract as nx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-UPDATE_ID = 0x0100AE00096EA800
-PROGRAM_ID = 0x0100AE00096EA000
+from game_profile import PROGRAM_ID, UPDATE_ID
 
 
 def _tickets(files, read):
@@ -54,7 +54,7 @@ def _pfs_main(read_section, fsh):
     files = {n: (o, s) for n, o, s in nx.parse_pfs0(lambda o, s: read_section(doff + o, s), 0)}
     if "main" not in files:
         return None
-    return {n: read_section(doff + files[n][0], files[n][1]) for n in ("main", "main.npdm") if n in files}
+    return {n: read_section(doff + o, s) for n, (o, s) in files.items()}
 
 
 def _bucket_entries(table, entry_size, fmt):
@@ -76,7 +76,7 @@ def unpack(path, keys_path, out_dir):
     files = nx.parse_pfs0(read, 0)
     tk = _tickets(files, read)
     if not any(r[:8] == UPDATE_ID.to_bytes(8, "big") for r in tk):
-        raise ValueError("Not the game's update: no ticket for title 0100AE00096EA800")
+        raise ValueError(f"Not the game's update: no ticket for title {UPDATE_ID:016X}")
     program = None
     for name, off, size in files:
         if name.endswith(".cnmt.nca") or not (name.endswith(".nca") or name.endswith(".ncz")):
@@ -126,6 +126,8 @@ def unpack(path, keys_path, out_dir):
     lvl_off, lvl_size = struct.unpack_from("<QQ", fsh[8:], 0x10 + 0x18 * 5)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "exefs").mkdir(exist_ok=True)
+    for old in (out_dir / "exefs").iterdir():  # never mix files of two ExeFS
+        old.unlink()
     for n, data in exefs.items():
         (out_dir / "exefs" / n).write_bytes(data)
     (out_dir / "romfs.patch").write_bytes(patch)

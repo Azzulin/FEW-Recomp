@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <string>
 
+#include "hwder/game_profile.h"
+
 namespace hwfs {
 
 struct SaveFolderSelection {
@@ -13,7 +15,7 @@ struct SaveFolderSelection {
 
 inline SaveFolderSelection inspect_save_folder(std::filesystem::path selected) {
     namespace fs = std::filesystem;
-    constexpr const char* title = "0100AE00096EA000";
+    constexpr const char* title = HW_GAME_TITLE_ID_STR;
     constexpr const char* user = "48574445525F55530000000000000001";
     selected = selected.lexically_normal();
     while (selected.filename().empty() && selected.parent_path() != selected) selected = selected.parent_path();
@@ -31,19 +33,19 @@ inline SaveFolderSelection inspect_save_folder(std::filesystem::path selected) {
         std::error_code ec;
         return fs::is_regular_file(path, ec);
     };
-    const bool main = regular(selected / "zmha.bin"), side = regular(selected / "zmhasd.bin");
+    const bool main = regular(selected / HW_GAME_SAVE_MAIN), side = regular(selected / HW_GAME_SAVE_SIDE);
     const bool canonical_leaf = named(selected, user) && named(selected.parent_path(), title);
     if (canonical_leaf && main && side) return {selected.parent_path().parent_path(), nullptr, true};
     if (main || side || canonical_leaf)
-        return {{}, "Choose the save root containing 0100AE00096EA000, or its account folder containing both "
-                    "zmha.bin and zmhasd.bin. A different title/user or partial flat save folder cannot be used."};
+        return {{}, "Choose the save root containing " HW_GAME_TITLE_ID_STR ", or its account folder containing both "
+                    HW_GAME_SAVE_MAIN " and " HW_GAME_SAVE_SIDE ". A different title/user or partial flat save folder cannot be used."};
     // Selecting the title folder would otherwise add a second title level.
     if (named(selected, title))
         return {{}, "This is the title folder. Choose its parent save folder, or the account folder inside it."};
     const auto account = selected / title / user;
-    const bool root_main = regular(account / "zmha.bin"), root_side = regular(account / "zmhasd.bin");
+    const bool root_main = regular(account / HW_GAME_SAVE_MAIN), root_side = regular(account / HW_GAME_SAVE_SIDE);
     if (root_main != root_side)
-        return {{}, "The selected save root contains an incomplete account save. Both zmha.bin and zmhasd.bin are required."};
+        return {{}, "The selected save root contains an incomplete account save. Both " HW_GAME_SAVE_MAIN " and " HW_GAME_SAVE_SIDE " are required."};
     return {selected};  // Existing root or a new empty root: preserve standard title/user routing.
 }
 
@@ -63,12 +65,12 @@ inline SaveFileSelection inspect_save_file(std::filesystem::path file) {
     auto name = file.filename().u8string();
     for (auto& c : name)
         if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    if (name != u8"zmha.bin") return {{}, {}, "Choose the save file zmha.bin."};
+    if (name != u8"" HW_GAME_SAVE_MAIN) return {{}, {}, "Choose the save file " HW_GAME_SAVE_MAIN "."};
     std::error_code ec;
     if (!fs::is_regular_file(file, ec)) return {{}, {}, "That save file does not exist."};
     const fs::path folder = file.parent_path();
-    if (!fs::is_regular_file(folder / "zmhasd.bin", ec))
-        return {{}, {}, "zmhasd.bin is missing next to that zmha.bin. A save needs both files."};
+    if (!fs::is_regular_file(folder / HW_GAME_SAVE_SIDE, ec))
+        return {{}, {}, HW_GAME_SAVE_SIDE " is missing next to that " HW_GAME_SAVE_MAIN ". A save needs both files."};
     const SaveFolderSelection leaf = inspect_save_folder(folder);
     if (!leaf.error && leaf.account_leaf) return {leaf.root, {}, nullptr};
     return {{}, folder, nullptr};

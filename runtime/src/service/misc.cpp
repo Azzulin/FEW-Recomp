@@ -3,6 +3,7 @@
 #include "host/calendar.h"
 
 #include "common.h"
+#include "hwder/game_profile.h"
 
 extern "C" u64 hw_cntvct();
 
@@ -378,13 +379,14 @@ public:
 class Aoc : public SimpleService {
 public:
     Aoc() : SimpleService("aoc:u") {
-        // The base game dump has no add-on content installed.
+        // No add-on content yet: Fire Emblem Warriors has five (0100F15003E65001..5), served later through these lists
+        // and fsp-srv OpenDataStorageByDataId. Base ID = application ID + 0x1000.
         ret<u32>(0, 0);  // CountAddOnContentByApplicationId
         ret<u32>(1, 0);  // ListAddOnContentByApplicationId
         ret<u32>(2, 0);  // CountAddOnContent
         ret<u32>(3, 0);  // ListAddOnContent
-        ret<u64>(4, 0x0100AE00096EB000ull);  // GetAddOnContentBaseIdByApplicationId
-        ret<u64>(5, 0x0100AE00096EB000ull);  // GetAddOnContentBaseId
+        ret<u64>(4, HW_GAME_TITLE_ID + 0x1000);  // GetAddOnContentBaseIdByApplicationId
+        ret<u64>(5, HW_GAME_TITLE_ID + 0x1000);  // GetAddOnContentBaseId
         nop({6, 7, 8});
         reg(8, [](Request&, Response& rs) { push_handle(rs, make_event()); });  // GetAddOnContentListChangedEvent
     }

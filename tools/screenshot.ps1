@@ -1,29 +1,28 @@
-# Capture the HWDER window (client area) to a PNG: powershell -File tools/screenshot.ps1 out.png
-param([string]$Out = "shot.png")
+# Capture the game window (client area) to a PNG without activating it, also when it was opened off-screen
+# (HWDER_OFFSCREEN): powershell -File tools/screenshot.ps1 out.png [-Process few]
+param([string]$Out = "shot.png", [string]$Process = "few")
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class W {
-  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   public struct RECT { public int L, T, R, B; }
-  public struct POINT { public int X, Y; }
 }
 "@
 [W]::SetProcessDPIAware() | Out-Null
-$proc = Get-Process hwder -ErrorAction SilentlyContinue | Select-Object -First 1
-$h = if ($proc) { $proc.MainWindowHandle } else { [IntPtr]::Zero }
-if ($h -eq [IntPtr]::Zero) { Write-Output "window not found"; exit 1 }
-[W]::SetForegroundWindow($h) | Out-Null
-Start-Sleep -Milliseconds 300
+$proc = Get-Process $Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+if (-not $proc) { Write-Output "window not found"; exit 1 }
+$h = $proc.MainWindowHandle
 $r = New-Object W+RECT; [W]::GetClientRect($h, [ref]$r) | Out-Null
-$p = New-Object W+POINT; [W]::ClientToScreen($h, [ref]$p) | Out-Null
 $w = $r.R - $r.L; $ht = $r.B - $r.T
+if ($w -le 0 -or $ht -le 0) { Write-Output "empty client area"; exit 1 }
 $bmp = New-Object System.Drawing.Bitmap $w, $ht
 $g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen($p.X, $p.Y, 0, 0, (New-Object System.Drawing.Size $w, $ht))
+$dc = $g.GetHdc()
+# PW_CLIENTONLY (1) | PW_RENDERFULLCONTENT (2): includes flip-model swapchain content.
+$ok = [W]::PrintWindow($h, $dc, 3)
+$g.ReleaseHdc($dc)
 $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
-Write-Output "saved $Out ($w x $ht)"
+Write-Output "saved $Out ($w x $ht, PrintWindow=$ok)"

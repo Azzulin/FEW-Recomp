@@ -20,6 +20,9 @@ option(HWDER_GAME_ONLY "Build generated game library without host runtime" OFF)
 option(HWDER_SETUP_UI_ONLY "Build only the code-free native Windows setup window" OFF)
 option(HWDER_MANAGED_PROBE_ONLY "Compile public production units and private-toolchain contracts without game inputs" OFF)
 option(HWDER_PUBLIC_RUNTIME_LINK_ONLY "Public synthetic guest fixture: link only, NEVER run or distribute" OFF)
+# Hooks into named game functions (runtime/src/game, runtime/src/interp). They were written for Hyrule Warriors;
+# off until tools/recomp/symbols.txt names the matching Fire Emblem Warriors functions.
+option(HW_GAME_HOOKS "Build the runtime's hooks into named game functions" OFF)
 if(HWDER_PUBLIC_RUNTIME_LINK_ONLY AND (NOT MINGW OR NOT EXISTS "${GEN_DIR}/public-link-fixture.json"))
     message(FATAL_ERROR "Public runtime link requires the private GNU ABI and explicit public fixture")
 endif()
@@ -194,6 +197,8 @@ add_executable(hwder ${RUNTIME_SOURCES} $<TARGET_OBJECTS:hwder_cpu_check>)
 if(HWDER_PUBLIC_RUNTIME_LINK_ONLY)
     # Cannot satisfy first_run's hwder.exe lookup or its ready certificate.
     set_target_properties(hwder PROPERTIES OUTPUT_NAME "HWDER-public-link-NOT-A-GAME")
+else()
+    set_target_properties(hwder PROPERTIES OUTPUT_NAME "few")  # Fire Emblem Warriors (gerar-few.ps1 publishes it)
 endif()
 
 # Version stamp: regenerated on every build (always out of date), rewritten only when it changes.

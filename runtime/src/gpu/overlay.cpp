@@ -5,6 +5,7 @@
 #include "fs/save_dir.h"
 #include "gpu/settings.h"
 #include "hid/host_input.h"
+#include "hwder/game_profile.h"
 #include "hwder/runtime.h"
 
 #include "imgui.h"
@@ -404,7 +405,7 @@ static std::string save_path() {
     std::error_code ec;
     for (auto& t : fs::directory_iterator(fs::path(hwfs::active_save_root()), ec))
         for (auto& u : fs::directory_iterator(t.path(), ec)) {
-            fs::path p = u.path() / "zmha.bin";
+            fs::path p = u.path() / HW_GAME_SAVE_MAIN;
             if (fs::exists(p, ec)) return p.string();
         }
     return "";
@@ -797,7 +798,7 @@ static void tab_input(bool& changed) {
     section("Motion");
     if (ImGui::Checkbox("Motion controls", &in.motion)) changed = true;
     help("Passes the controller's gyro and accelerometer to the game (DualSense, DualShock 4, Switch Pro and\n"
-         "others with motion sensors). Hyrule Warriors itself barely uses motion.");
+         "others with motion sensors).");
     if (pad.connected && !pad.has_gyro) ImGui::TextDisabled("This controller has no motion sensors.");
 
     section("Keyboard");
@@ -862,29 +863,10 @@ static void tab_gameplay(bool& changed) {
     section("Game memory");
     opt_game_memory(changed);
 
-    section("Cheats (save file)");
-    static std::string status;
+    // HWDER's "import unlocks from a reference save" wrote bytes in Hyrule Warriors' save layout; it is not offered
+    // here until this game's save format is known.
     std::string sp = save_path();
     ImGui::TextDisabled("%s", sp.empty() ? "no save found in the save folder" : sp.c_str());
-    if (ImGui::Button("Import unlocks from reference")) {
-        // Reference = a 100% save at save_reference/zmha.bin. Every byte that is 0 here and 1 there
-        // is set (unlock/clear flags); counters and other values are left alone. The game reads its
-        // save at boot, so this takes effect on the next launch.
-        auto ref = read_all("save_reference/zmha.bin"), cur = read_all(sp);
-        size_t n = std::min(ref.size(), cur.size()), changed = 0;
-        for (size_t i = 0x40; i < n; i++)
-            if (cur[i] == 0 && ref[i] == 1) { cur[i] = 1; changed++; }
-        if (!ref.empty() && !cur.empty()) {
-            if (FILE* f = fopen((sp + ".bak").c_str(), "wb")) { auto o = read_all(sp); fwrite(o.data(), 1, o.size(), f); fclose(f); }
-            if (FILE* f = fopen(sp.c_str(), "wb")) { fwrite(cur.data(), 1, cur.size(), f); fclose(f); }
-            status = std::to_string(changed) + " flags set - restart the game (backup: zmha.bin.bak)";
-        } else {
-            status = ref.empty() ? "no reference save at save_reference/zmha.bin" : "could not read the save";
-        }
-    }
-    help("Copies every unlock flag from a 100% save placed at save_reference/zmha.bin into your save.\n"
-         "Counters and other values are left alone. Backs up your save first. Takes effect on the next launch.");
-    if (!status.empty()) ImGui::TextWrapped("%s", status.c_str());
 }
 
 // Mods (fs/mods.h): what the mods folder holds, which ones this run loaded, and on/off for the next launch.
@@ -901,7 +883,7 @@ static void tab_mods(bool& changed) {
 
     section("Mods folder");
     ImGui::TextWrapped("Put each mod in its own folder here, holding the game files it changes. Mods made for the "
-                       "Switch work as they are (a romfs folder or the atmosphere/contents/0100AE00096EA000/romfs layout). "
+                       "Switch work as they are (a romfs folder or the atmosphere/contents/" HW_GAME_TITLE_ID_STR "/romfs layout). "
                        "Mods load in name order and a later one wins where two change the same file. Your game files are "
                        "never changed.");
     static std::string folder;
@@ -1117,7 +1099,7 @@ static void build_ui(VkExtent2D extent) {
         ImGui::PopFont();
         ImGui::SameLine(0.0f, st.ItemSpacing.x * 1.5f);
         ImGui::SetCursorPosY(y + big - ImGui::GetTextLineHeight() - 2.0f * s);
-        ImGui::TextDisabled("Hyrule Warriors: Definitive Edition");
+        ImGui::TextDisabled(HW_GAME_NAME);
         // The build's version (git describe, as the setup package is named), right-aligned on the same line.
         const char* ver = hw_version();
         ImGui::SameLine();

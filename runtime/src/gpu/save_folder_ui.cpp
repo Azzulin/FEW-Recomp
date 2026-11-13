@@ -8,6 +8,7 @@
 #include "fs/save_dir.h"
 #include "gpu/display.h"
 #include "gpu/settings.h"
+#include "hwder/game_profile.h"
 #include "hwder/runtime.h"
 
 #ifdef _WIN32
@@ -64,11 +65,11 @@ void pick_thread(std::string start) {
     const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     IFileOpenDialog* dlg = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) {
-        dlg->SetTitle(L"Choose your save file (zmha.bin)");
+        dlg->SetTitle(L"Choose your save file (" HW_GAME_SAVE_MAIN ")");
         FILEOPENDIALOGOPTIONS opts = 0;
         dlg->GetOptions(&opts);
         dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST);
-        const COMDLG_FILTERSPEC filter[] = {{L"Hyrule Warriors save (zmha.bin)", L"zmha.bin"}, {L"All files", L"*.*"}};
+        const COMDLG_FILTERSPEC filter[] = {{L"" HW_GAME_NAME " save (" HW_GAME_SAVE_MAIN ")", L"" HW_GAME_SAVE_MAIN}, {L"All files", L"*.*"}};
         dlg->SetFileTypes(2, filter);
         // Start in the current folder, or the nearest one that exists.
         for (std::filesystem::path p = to_wide(start); !p.empty(); p = p.parent_path()) {
@@ -198,7 +199,7 @@ void on_pick(const std::string& file, bool in_game, bool& changed) {
         return;
     }
     g_ask = from;  // the import question opens this frame
-    g_ask_there = hwfs::is_save_file_folder(hwfs::chosen_save_dir() + "\\0100AE00096EA000\\48574445525F55530000000000000001");
+    g_ask_there = hwfs::is_save_file_folder(hwfs::chosen_save_dir() + "\\" HW_GAME_TITLE_ID_STR "\\48574445525F55530000000000000001");
 }
 
 }  // namespace
@@ -239,7 +240,7 @@ void opt_save_folder(bool in_game, bool& changed) {
 #else
     help("Where your saves are kept. The default is ~/.local/share/HWDER/save.\n"
 #endif
-         "Choose your save file, zmha.bin (zmhasd.bin must be next to it). A save kept by HWDER, or copied from a\n"
+         "Choose your save file, " HW_GAME_SAVE_MAIN " (" HW_GAME_SAVE_SIDE " must be next to it). A save kept by HWDER, or copied from a\n"
          "console in the same layout, is used where it is; any other (an emulator export, a backup) is imported\n"
          "into the current save folder. Nothing is moved or deleted, and a save an import replaces is backed up first.");
     ImGui::SameLine();
@@ -264,7 +265,7 @@ void opt_save_folder(bool in_game, bool& changed) {
         ImGui::TextWrapped("Import the save in %s into %s?", g_ask.c_str(), hwfs::chosen_save_dir().c_str());
         if (there)
             ImGui::TextColored(kPending, "The save folder already has a save. Importing replaces it, after backing it up beside it.");
-        ImGui::TextDisabled("Only zmha.bin and zmhasd.bin are copied. Nothing in %s is moved or deleted.", g_ask.c_str());
+        ImGui::TextDisabled("Only " HW_GAME_SAVE_MAIN " and " HW_GAME_SAVE_SIDE " are copied. Nothing in %s is moved or deleted.", g_ask.c_str());
         if (in_game) ImGui::TextDisabled("The import happens when you next start the game.");
         ImGui::Spacing();
         const float bw = 220.0f * s;

@@ -144,7 +144,7 @@ void game_section() {
     if (inf.status == Status::Ok && !inf.warning.empty()) {
         char line[64];
         snprintf(line, sizeof(line), "%016llX", (unsigned long long)inf.title_id);
-        status_line(kPending, "Doesn't look like Hyrule Warriors: Definitive Edition (title %s) - you can still try it", line);
+        status_line(kPending, "Doesn't look like " HW_GAME_NAME " (title %s) - you can still try it", line);
         ImGui::TextWrapped("Found %s.", inf.warning.c_str());
     } else if (inf.status == Status::Ok) status_line(kOk, "%s", "Ready");
     else if (!inf.nsp_found) status_line(kError, "%s", "Not found");
@@ -211,7 +211,7 @@ void draw(VkExtent2D extent) {
         const float y = ImGui::GetCursorPosY();
         ImGui::PushFont(overlay::bold_font(), st.FontSizeBase * 1.6f);
         const float big = ImGui::GetTextLineHeight();
-        ImGui::TextColored(overlay::kGold, "Hyrule Warriors: Definitive Edition");
+        ImGui::TextColored(overlay::kGold, HW_GAME_NAME);
         ImGui::PopFont();
         ImGui::SameLine(0.0f, st.ItemSpacing.x * 1.5f);
         ImGui::SetCursorPosY(y + big - ImGui::GetTextLineHeight() - 2.0f * s);
@@ -257,7 +257,7 @@ void draw(VkExtent2D extent) {
         ImGui::SetNextWindowSize(ImVec2(std::min(extent.width * 0.9f, 560.0f * s), 0));
         if (ImGui::BeginPopupModal("Unverified game file", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
             const hwfs::nsp::Info& inf = hwfs::nsp::info();
-            ImGui::TextWrapped("This file doesn't look like Hyrule Warriors: Definitive Edition (title ID %016llX, expected %016llX). "
+            ImGui::TextWrapped("This file doesn't look like " HW_GAME_NAME " (title ID %016llX, expected %016llX). "
                                "It may crash or misbehave.",
                                (unsigned long long)inf.title_id, (unsigned long long)hwfs::nsp::kTitleId);
             ImGui::Spacing();
@@ -345,7 +345,7 @@ bool run(const std::string& exe_dir) {
             settings::Launch& l = settings::launch();
             const std::string& cur = p == Pick::Game ? (l.nsp_path.empty() ? hwfs::nsp::info().nsp_path : l.nsp_path)
                                                      : (l.keys_path.empty() ? hwfs::nsp::info().keys_path : l.keys_path);
-            std::string path = p == Pick::Game ? pick_file(L"Choose your Hyrule Warriors: Definitive Edition game file",
+            std::string path = p == Pick::Game ? pick_file(L"Choose your " HW_GAME_NAME " game file (base game)",
                                                            L"Nintendo Switch package (*.nsp)", L"*.nsp", cur)
                                                : pick_file(L"Choose your prod.keys", L"Key files (*.keys)", L"*.keys", cur);
             if (!path.empty()) {

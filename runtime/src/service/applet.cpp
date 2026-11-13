@@ -5,6 +5,7 @@
 #include "common.h"
 #include "fs/nsp.h"
 #include "hid/host_input.h"
+#include "hwder/game_profile.h"
 
 namespace ipc {
 
@@ -317,15 +318,16 @@ public:
         });
         reg(20, [](Request&, Response& rs) { rs.push<u64>(0); });  // EnsureSaveData
         reg(21, [](Request&, Response& rs) {                      // GetDesiredLanguage
-            // The best language the game supports for the console's English: the Japanese release has only "ja".
-            const char* code = hwfs::nsp::is_japanese() ? "ja" : "en-US";
+            // The language the game's data supports (hwder/game_profile.h); HWDER_LANGUAGE overrides it (e.g. en-US).
+            const char* env = getenv("HWDER_LANGUAGE");
+            const char* code = env && *env && strlen(env) <= 8 ? env : HW_GAME_LANGUAGE;
             u64 lang = 0;
             memcpy(&lang, code, strlen(code));
             rs.push(lang);
         });
         nop({22, 30, 31, 32, 60, 65, 66, 67, 68, 90, 100, 101, 102, 111, 120, 121, 122, 123, 124, 150, 151});
         reg(23, [](Request&, Response& rs) {  // GetDisplayVersion
-            char v[16] = "1.0.0";
+            char v[16] = HW_GAME_DISPLAY_VERSION;  // the update the generated code is built from
             rs.data.insert(rs.data.end(), v, v + 16);
         });
         reg(25, [](Request&, Response& rs) { rs.push<u64>(0); });  // ExtendSaveData
