@@ -1,0 +1,10 @@
+# HWDER_INPUT_SCRIPT: from an empty save into the prologue battle, then fight.
+6000 120 A every=2000 until=30000
+# "Begin game with these settings?" starts on "No": LEFT then A (also advances the opening dialogue).
+30000 120 LEFT every=2500 until=100000
+30700 120 A every=2500 until=100000
+# Battle: B closes the tutorial pop-ups (in battle it dodges), Y attacks, the stick walks forward and sideways.
+95000 120 B every=3000
+110000 100 Y every=800
+110000 3000 - ly=20000 lx=12000 every=6000
+113000 3000 - ly=20000 lx=-12000 every=6000

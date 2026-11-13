@@ -1,0 +1,6 @@
+# HWDER_INPUT_SCRIPT: from an empty save into the story.
+# Until 30 s: A every 2 s (create save, update notes, character and style menus with their defaults).
+6000 120 A every=2000 until=30000
+# Then every 2.5 s: LEFT (selects "Yes" on "Begin game with these settings?", whose cursor starts on "No"), then A.
+30000 120 LEFT every=2500
+30700 120 A every=2500

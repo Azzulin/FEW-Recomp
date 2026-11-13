@@ -1,0 +1,2 @@
+# HWDER_INPUT_SCRIPT: A every 2 s from 6 s on (advances dialogs and menus with their default choice).
+6000 120 A every=2000

@@ -2,4 +2,5 @@
 list(APPEND RUNTIME_SOURCES
     runtime/src/hid/hid.cpp
     runtime/src/hid/host_input.cpp
+    runtime/src/hid/input_script.cpp
 )

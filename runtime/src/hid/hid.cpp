@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "host_input.h"
+#include "hid/input_script.h"
 #include "service/common.h"
 
 extern "C" u64 hw_cntvct();
@@ -301,6 +302,7 @@ void update_thread() {
     const u64 t0 = host::ticks_ms();
     for (;;) {
         hid::poll_host_input(in);
+        hid::apply_input_script(host::ticks_ms() - t0, in);  // HWDER_INPUT_SCRIPT (input_script.h)
         if (plus_spam && host::ticks_ms() - t0 < 30000 && (host::ticks_ms() - t0) % 200 < 100) in.pads[0].buttons |= hid::kBtnPlus;
         if (battle) {
             u64 t = host::ticks_ms() - t0;

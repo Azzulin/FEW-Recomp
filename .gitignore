@@ -58,3 +58,4 @@ __pycache__/
 !tools/setup_ui/install_private_python.ps1
 !tools/tests/test_private_python.ps1
 !tools/screenshot.ps1
+!tools/run_test.ps1

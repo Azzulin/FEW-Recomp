@@ -333,6 +333,56 @@ void Translator::emit_tex(Inst in, Op op) {
         store_swizzled(*this, da, db, vals, f16);
         return;
     }
+    case Op::TLDS: {
+        // Texel fetch, compact form (texelFetch): integer coordinates in Ra/Rb, destinations and write mask as TEXS.
+        // Target (bits 53-56): 0 1D lod 0, 1 1D lod Rb, 2 2D lod 0 (Ra, Rb), 4 2D lod 0 + offset Rb, 5 2D lod Rb,
+        // 6 2D multisample (sample Rb), 7 3D lod 0, 8 2D array lod 0 (layer Ra), 12 2D lod Rb + offset Rb+1.
+        // Fire Emblem Warriors reads depth and G-buffer targets this way in its post-processing.
+        u32 target = in.bits(53, 4);
+        u32 ra = in.bits(8, 8), rb = in.bits(20, 8);
+        u32 handle = in.bits(36, 13) * 4;
+        bool f16 = !in.bit(59);
+        TextureType ty = TextureType::Tex2D;
+        Id coords = 0, lod = 0, offset = 0;
+        auto si = [&](u32 r) { return b.bitcast(t_s32, R(r)); };
+        auto iv = [&](std::vector<Id> c) { return b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, u32(c.size())), c); };
+        auto off2 = [&](u32 r) {
+            Id v = R(r);
+            auto sx = [&](u32 o) { return b.bitcast(t_s32, bfe(v, u(o), u(4), true)); };
+            return b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, 2), {sx(0), sx(4)});
+        };
+        switch (target) {
+        case 0: ty = TextureType::Tex1D; coords = si(ra); break;
+        case 1: ty = TextureType::Tex1D; coords = si(ra); lod = si(rb); break;
+        case 2: coords = iv({si(ra), si(rb)}); break;
+        case 4: coords = iv({si(ra), si(ra + 1)}); offset = off2(rb); break;
+        case 5: coords = iv({si(ra), si(ra + 1)}); lod = si(rb); break;
+        case 6: log_once("TLDS multisample fetch read as sample 0 of a single-sample view");
+                coords = iv({si(ra), si(ra + 1)}); break;
+        case 7: ty = TextureType::Tex3D; coords = iv({si(ra), si(ra + 1), si(rb)}); break;
+        case 8: ty = TextureType::Tex2DArray;
+                coords = iv({si(ra + 1), si(rb), b.bitcast(t_s32, op2(spv::OpBitwiseAnd, t_u32, R(ra), u(0xFFFF)))}); break;
+        case 12: coords = iv({si(ra), si(ra + 1)}); lod = si(rb); offset = off2(rb + 1); break;
+        default: log_once("TLDS target " + std::to_string(target)); return;
+        }
+        Tex& tex = texture(handle, ty, false);
+        Id image = b.op(spv::OpImage, tex.image_t, {b.load(tex.sampled_t, tex.var)});
+        std::vector<u32> args{image, coords, u32(spv::ImageOperandsLodMask) | (offset ? u32(spv::ImageOperandsOffsetMask) : 0u),
+                              lod ? lod : b.bitcast(t_s32, u(0))};
+        if (offset) {
+            b.capability(spv::CapabilityImageGatherExtended);
+            args.push_back(offset);
+        }
+        Id s = b.op(spv::OpImageFetch, t_v4f, args);
+        u32 swz = in.bits(50, 3);
+        u32 db = in.bits(28, 8), da = in.bits(0, 8);
+        u32 mask = db == 255 ? (swz < 8 ? RG_LUT[swz] : 1) : (swz < 5 ? RGBA_LUT[swz] : 15);
+        std::vector<Id> vals;
+        for (u32 c = 0; c < 4; c++)
+            if ((mask >> c) & 1) vals.push_back(component(*this, s, false, c));
+        store_swizzled(*this, da, db, vals, f16);
+        return;
+    }
     case Op::TEX:
     case Op::TEX_b: {
         bool bindless = op == Op::TEX_b;
