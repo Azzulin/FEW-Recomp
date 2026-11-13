@@ -1,7 +1,7 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-13 (fim da sessão de otimização, interrompida a pedido do dono). Leia antes de qualquer
-tarefa; atualize ao terminar uma sessão.
+Atualizado em 2026-11-13, fim da segunda rodada sobre o travamento (parada a pedido do dono). Leia antes de
+qualquer tarefa; atualize ao terminar uma sessão.
 
 ## Estado
 
@@ -13,13 +13,16 @@ O jogo **roda nativo no Windows** a partir de base US v0 + update 1.5.0 + 5 DLCs
 - as 5 DLCs são listadas (`aoc:u`) e montadas pelo jogo (`OpenDataStorageByDataId`) no boot.
 
 **Bloqueio atual: o jogo trava na batalha do prólogo** depois de ~30–50 s de luta (seção "Travamento na batalha").
-Aconteceu na primeira sessão do dono e foi reproduzido 2 de 2 vezes por roteiro. Há uma correção candidata,
-**não compilada e não testada**, no branch `wip/gpfifo-snapshot`.
+Aconteceu na primeira sessão do dono e em 3 de 3 testes com `battle_long.txt` sem trace. **Ainda sem correção**:
+a primeira candidata (copiar os pushbuffers no envio) foi testada e não resolve.
 
 | Ramo | Conteúdo |
 |---|---|
-| `main` (5efc169 + docs) | o que está publicado em `Jogar no PC\few.exe` |
-| `wip/gpfifo-snapshot` (131cb01) | correção candidata do travamento (cópia dos pushbuffers no envio) |
+| `main` | estado bom conhecido (até a DLC e a escala travada em 1x) + documentação |
+| `wip/gpfifo-snapshot` | `main` + cópia dos pushbuffers no envio (não resolve, inofensiva) + log detalhado do método em subcanal sem classe |
+
+**`Jogar no PC\few.exe` hoje é o build do `wip/gpfifo-snapshot`** (o último publicado). Ele se comporta como o
+`main`, inclusive no travamento. Para voltar ao `main`: `git switch main` e `.\gerar-few.ps1 -SoBuild`.
 
 ## Como trabalhar
 
@@ -73,20 +76,51 @@ Assinatura, igual nas três ocorrências (dono aos 156 s; testes aos 148 s e 146
 - Não aparece espera de semáforo nem de syncpoint dentro do pushbuffer (`semaphore acquire … >100 ms`,
   `pushbuffer syncpoint wait`), nem erro de dispositivo Vulkan.
 
-**Hipótese principal:** `gpu.cpp` guarda na fila só os endereços das entradas do GPFIFO (até 24 envios) e lê os
-comandos da memória do guest **ao executar**. Com a thread da GPU parada centenas de ms, o jogo reaproveita a
-memória de comandos; a GPU emulada executa conteúdo novo no lugar do antigo (o método sem sentido) e perde os
-incrementos de syncpoint. O hardware não sofre disso porque o GPFIFO faz prefetch.
+#### Hipótese 1, testada e descartada: memória de comandos reaproveitada
 
-**Correção candidata** (branch `wip/gpfifo-snapshot`): `channel_submit` copia as palavras de cada entrada no
-momento do envio (exceto as `no_prefetch`); `execute_inner` usa a cópia. `HWDER_GPFIFO_LIVE=1` volta ao
-comportamento antigo para comparação. Falta: compilar, repetir `battle_long.txt` com cache frio (deve passar dos
-5 min) e conferir que o custo da cópia é pequeno (centenas de KB por quadro).
+`gpu.cpp` guarda na fila só os endereços das entradas do GPFIFO e lê os comandos da memória do guest ao executar.
+A ideia era que, com a thread da GPU parada, o jogo reaproveitasse a memória de comandos. Correção no branch
+`wip/gpfifo-snapshot`: `channel_submit` copia as palavras de cada entrada no envio (exceto `no_prefetch`;
+`HWDER_GPFIFO_LIVE=1` volta ao antigo). **Compilada e testada: travou do mesmo jeito**, aos 139 s,
+`gpu: method 0x44 on unbound subchannel 0`, cerca 1:35934 parada em 35928 (6 atrás). Dessa vez sem engasgo longo
+antes (o maior foi de 62 ms), então o engasgo não é condição necessária.
 
-**Hipótese alternativa, se a cópia não resolver:** compute shaders com memória global e atômicos traduzidos como
-no-op. `LDG`, `RED`, `ATOM` e `SUST` aparecem pela primeira vez aos 141 s da sessão do dono, junto com três
-despachos de 41–48 ms. Para separar as duas: `-Env "HWDER_GPU_TRACE=3"` registra os `SET_OBJECT` de cada canal e
-mostra se o método sem sentido vem de lixo no pushbuffer.
+#### O que se sabe (2026-11-13)
+
+- Dois canais de GPU (syncpoints 1 e 2), criados no boot; os dois ligam as classes no início (`SET_OBJECT`):
+  subcanal 0 `B197` (3D), 1 `B1C0` (compute), 2 `A140` (inline), 3 `902D` (2D), 4 `B0B5` (DMA). Visto com
+  `HWDER_GPU_TRACE=3`.
+- Os envios com `FENCE_INCREMENT` reservam `2 + extra` valores de syncpoint (`nvdrv.cpp GpuChannel::submit`): 2
+  do próprio envio (aplicados por `on_gpu_idle` ao fim de `execute_inner`) e `extra` que o pushbuffer incrementa
+  (`SYNCPOINTB`). **Faltar 6 de uma vez** cabe num envio inteiro que não terminou (2 + 4 do pushbuffer). Se fosse
+  só lixo no pushbuffer, os 2 finais ainda viriam. Isso aponta para a **thread da GPU parada dentro de um envio**
+  ou para trabalho do Vulkan que nunca conclui (os `on_gpu_idle` só disparam quando a GPU real termina).
+- Nenhuma espera do runtime registrou atraso (`semaphore acquire … >100 ms`, `pushbuffer syncpoint wait`), e não
+  há erro de dispositivo Vulkan no log. Uma espera sem log, ou um shader em laço infinito na GPU real, explicariam.
+- `HWDER_GPU_TRACE=3` é pesado demais: o jogo cai para 6–9 fps e não chega à batalha em 200 s (teste inútil para
+  o travamento). Não usar para isto.
+
+#### Hipótese 2 (a mais forte agora): compute com memória global e atômicos como no-op
+
+`LDG`, `RED`, `ATOM` e `SUST` aparecem pela primeira vez durante a batalha (141 s na sessão do dono, junto com
+três despachos de 41–48 ms). Um compute shader que espera um contador atômico mudar e sempre lê 0 pode ficar em
+laço na GPU; o fence do Vulkan não conclui, os `on_gpu_idle` não disparam, o syncpoint para. Implementação em
+"Pendências", item 2.
+
+#### Próxima sessão: plano
+
+1. **Diagnóstico pós-morte, barato** (antes de qualquer correção): quando o `vi` registra
+   `frame fence … not reached after 1 s`, registrar o estado da thread da GPU: se está executando (qual envio,
+   syncpoint, entradas, quantos `extra`), tamanho da fila, quantos `on_gpu_idle` estão pendentes e se o último
+   fence do Vulkan foi sinalizado (`vkGetFenceStatus` ou valor do semáforo de timeline). Isso separa
+   "thread da GPU presa no runtime" de "GPU real presa num shader".
+2. Rodar `battle_long.txt` **sem trace** (cache frio) com o build do `wip/gpfifo-snapshot`, que já registra canal e
+   classes no método sem classe.
+3. Se for a GPU real presa num compute: implementar memória global e atômicos (item 2 das pendências). Teste
+   rápido possível antes disso: pular os despachos de compute cujo shader tenha `ATOM`/`RED`/`LDG` não traduzidos
+   e ver se o travamento some (diagnóstico, não correção: imagem errada não é aceitável como solução).
+4. Se for a thread da GPU presa no runtime: o pós-morte mostra onde; olhar `flush_commands`/`on_gpu_idle` em
+   `gpu/vk`.
 
 ### Taxa de quadros
 
@@ -111,7 +145,7 @@ mostra se o método sem sentido vem de lixo no pushbuffer.
 
 ## Pendências, por prioridade
 
-1. **Travamento na batalha**: compilar e testar `wip/gpfifo-snapshot` (acima). Se resolver, juntar ao `main`,
+1. **Travamento na batalha**: seguir o plano em "Próxima sessão" acima. Quando resolver, juntar ao `main`,
    publicar e pedir ao dono uma sessão longa.
 2. **Memória global e atômicos no tradutor** (`LDG`/`STG`/`ATOM`/`ATOMS`/`RED`, também `SUST`, `AL2P` + `IPA`
    indexado, `S2R SR 57`; hoje no-op). Notas de projeto, nada implementado:
@@ -159,3 +193,7 @@ mostra se o método sem sentido vem de lixo no pushbuffer.
   saída de `gerar-few.ps1` (`ERRO: Compilacao falhou`) antes de tirar conclusões de um teste.
 - Os caches de pipeline em `build\run` são reaproveitados entre testes; para medir engasgos de primeira vez,
   apague-os.
+- Um branch criado antes de um commit de documentação não tem os roteiros novos: `run_test.ps1` falha em
+  `Resolve-Path`. Rebaseie o branch sobre o `main` antes de testar.
+- `gerar-few.ps1` publica o build da árvore atual, seja qual for o branch: anote qual branch está em
+  `Jogar no PC`.

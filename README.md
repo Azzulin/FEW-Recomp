@@ -14,8 +14,8 @@ módulos e quase o mesmo SDK (3.7.0 contra 3.5.1). Detalhes em [docs/few.md](doc
 ## Estado
 
 Roda nativo no Windows: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo, com as cinco DLCs
-montadas pelo jogo. **Trava na batalha do prólogo depois de ~30–50 s de luta**; há uma correção candidata, ainda
-não testada, no branch `wip/gpfifo-snapshot`. Os extras do HWDER que dependem de endereços do Hyrule
+montadas pelo jogo. **Trava na batalha do prólogo depois de ~30–50 s de luta**, ainda sem correção; análise e
+plano em [docs/handover.md](docs/handover.md#travamento-na-batalha). Os extras do HWDER que dependem de endereços do Hyrule
 Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução fica
 em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
 
