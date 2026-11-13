@@ -21,10 +21,13 @@
   .\gerar-deck.ps1             # build no WSL + monta a pasta
   .\gerar-deck.ps1 -SoMontar   # só remonta a pasta com o último build do WSL
   .\gerar-deck.ps1 -March ""   # AVX2 genérico (outros PCs Linux), em vez do Zen 2
+  .\gerar-deck.ps1 -SoDados    # só os dados (NSPs, chaves, update, scripts), sem o few: para ir enviando
+                               # os ~19 GB enquanto o WSL compila
 #>
 [CmdletBinding()]
 param(
     [switch]$SoMontar,
+    [switch]$SoDados,
     [int]$Jobs = 6,
     [string]$Distro = 'archlinux',
     [string]$March = 'znver2',
@@ -39,7 +42,7 @@ function WinToWsl([string]$p) { '/mnt/' + $p.Substring(0, 1).ToLower() + ($p.Sub
 function WriteLF([string]$path, [string]$text) { [IO.File]::WriteAllText($path, ($text -replace "`r`n", "`n"), $utf8) }
 
 # 1. build no WSL
-if (-not $SoMontar) {
+if (-not $SoMontar -and -not $SoDados) {
     Write-Host "==> Build Linux no WSL ($Distro, -march=$March, $Jobs jobs)" -ForegroundColor Cyan
     & wsl.exe -d $Distro --exec env "FEW_JOBS=$Jobs" "FEW_MARCH=$March" bash (WinToWsl (Join-Path $root 'tools\deck\build-deck-wsl.sh')) (WinToWsl $root)
     if ($LASTEXITCODE) { Fail 'build no WSL falhou (veja a saída acima)' }
@@ -49,8 +52,10 @@ if (-not $SoMontar) {
 Write-Host "==> Montando $out" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $out, "$out\tools", "$out\save", "$out\update\exefs" | Out-Null
 $dst = WinToWsl $out
-& wsl.exe -d $Distro --exec sh -c "set -e; test -f '$WslBuild/few'; cp -f '$WslBuild/few' '$dst/few'; sha256sum '$WslBuild/few'"
-if ($LASTEXITCODE) { Fail "não achei o build Linux em $WslBuild (rode sem -SoMontar)" }
+if (-not $SoDados) {
+    & wsl.exe -d $Distro --exec sh -c "set -e; test -f '$WslBuild/few'; cp -f '$WslBuild/few' '$dst/few'; sha256sum '$WslBuild/few'"
+    if ($LASTEXITCODE) { Fail "não achei o build Linux em $WslBuild (rode sem -SoMontar)" }
+}
 
 # Hardlinks: New-Item -Target trata [ ] do nome como curinga; a API do Windows usa o caminho literal.
 Add-Type -Namespace Few -Name Fs -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool CreateHardLink(string link, string target, IntPtr sa);'

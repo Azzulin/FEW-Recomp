@@ -7,13 +7,14 @@
 # Variáveis: DECK_HOST (padrão deck@<ip-do-deck>), DECK_KEY (padrão ~/.ssh/<chave-do-deck>)
 #            ENVIAR_INI=1  sobrescreve também o hwder_settings.ini do Deck (por padrão o de lá é mantido, com os
 #                          ajustes feitos no F1)
+#            SO_DADOS=1    envia sem o few (pasta montada com gerar-deck.ps1 -SoDados)
 # O Deck precisa estar ACORDADO e com o sshd ativo (no Deck: sudo systemctl enable --now sshd).
 set -euo pipefail
 HOST=${DECK_HOST:-deck@<ip-do-deck>}
 KEY=${DECK_KEY:-$HOME/.ssh/<chave-do-deck>}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SRC="$ROOT/Envio Deck/FireEmblemWarriors"
-[ -f "$SRC/few" ] || { echo "ERRO: monte a pasta antes (.\\gerar-deck.ps1)"; exit 1; }
+[ -f "$SRC/few" ] || [ "${SO_DADOS:-}" = 1 ] || { echo "ERRO: monte a pasta antes (.\\gerar-deck.ps1)"; exit 1; }
 
 ssh_deck() { ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }   # aspas para o shell remoto
@@ -57,7 +58,7 @@ for f in "${files[@]}"; do
     else echo "ERRO: $f difere após $action (local $l, Deck $r)"; exit 1; fi
 done
 
-ssh_deck -n "cd $(q "$DEST") && chmod +x few few-steam.sh instalar-no-deck.sh"
+ssh_deck -n "cd $(q "$DEST") && chmod +x few-steam.sh instalar-no-deck.sh && { [ ! -f few ] || chmod +x few; }"
 echo
 echo "Pronto em $DEST. Para criar o atalho na Steam (uma vez), no Deck:"
 echo "    cd $(q "$DEST") && sh instalar-no-deck.sh"

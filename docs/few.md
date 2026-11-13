@@ -75,11 +75,16 @@ O bloco de parâmetros do NVDEC traz `num_ref_idx_*_default_active_minus1` (1 e 
 - Batalha: o jogo pede 30 Hz (`limiter` ~32,6 ms por quadro) com a thread da GPU ocupada 6–7 ms por quadro.
 - Primeira sessão com cache frio: compilações síncronas de pipeline de 100–330 ms quando surgem efeitos novos;
   `skipped_draws` 486 em ~30 s de batalha.
-- Travamento reproduzível na batalha do prólogo (~30–50 s de luta com cache frio), descrito em
-  [handover.md](handover.md#travamento-na-batalha).
-- Há shaders com `SUST` (escrita em imagem) e `ATOMS`; o efeito deles ainda não foi identificado. Em 2x a
-  composição cobre só o quadrante superior esquerdo, a forma típica de compute com grade em tamanho nativo
-  (diagnóstico provável, não confirmado).
+- **Partículas da batalha por draw indireto**: shaders de cálculo de culling e "append" (`LDG`/`STG`/`RED`/`ATOM`,
+  `ATOMS` com `S2R SR_LTMASK`) escrevem os argumentos; o NVN chama a **macro 3D 25** (`topologia 7 = quads,
+  contagem, instâncias, primeiro vértice, instância base`) e entrega os 4 últimos parâmetros por uma entrada do
+  GPFIFO que aponta para o buffer de argumentos (a entrada anterior termina no cabeçalho do método `0xe33`).
+  Detalhes e correção em [handover.md](handover.md#travamento-na-batalha-resolvido).
+- **Storage buffers em compute**: descritores no `c0` a partir de **0x310**, 16 bytes cada (`endereço baixo,
+  endereço alto, tamanho, 0`). Ex.: descritor 1 (`c0[0x320]`) é um contador de 4 bytes; o 0 chega a 0x403f80 bytes.
+- Batalha com partículas: **~450–800 despachos de compute por quadro**, com um `WaitForIdle` do 3D entre eles.
+- Há shaders com `SUST` (escrita em imagem, ainda no-op). Em 2x a composição cobre só o quadrante superior
+  esquerdo, a forma típica de compute com grade em tamanho nativo (diagnóstico provável, não confirmado).
 
 ## Comparação com a versão japonesa v0 (dump descartado)
 

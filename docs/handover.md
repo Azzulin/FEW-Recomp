@@ -1,7 +1,7 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-13, fim da segunda rodada sobre o travamento (parada a pedido do dono). Leia antes de
-qualquer tarefa; atualize ao terminar uma sessão.
+Atualizado em 2026-11-13, fim da terceira rodada: travamento da batalha resolvido, memória global nos shaders de
+cálculo, build do Steam Deck. Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
 
 ## Estado
 
@@ -9,20 +9,17 @@ O jogo **roda nativo no Windows** a partir de base US v0 + update 1.5.0 + 5 DLCs
 
 - boot, logos, vídeo de abertura (H.264) sem artefatos;
 - criação de save, notas do update 1.5.0, menus de novo jogo;
-- cutscene do prólogo e **a batalha do prólogo** com cenário, multidão, efeitos, diálogos, HUD, minimapa e KO;
+- cutscene do prólogo e **a batalha do prólogo** com cenário, multidão, efeitos (inclusive as partículas da GPU:
+  poeira, riscos de velocidade), diálogos, HUD, minimapa e KO;
 - as 5 DLCs são listadas (`aoc:u`) e montadas pelo jogo (`OpenDataStorageByDataId`) no boot.
 
-**Bloqueio atual: o jogo trava na batalha do prólogo** depois de ~30–50 s de luta (seção "Travamento na batalha").
-Aconteceu na primeira sessão do dono e em 3 de 3 testes com `battle_long.txt` sem trace. **Ainda sem correção**:
-a primeira candidata (copiar os pushbuffers no envio) foi testada e não resolve.
+**O travamento da batalha está resolvido** (seção "Travamento na batalha"): 330 s de `battle_long.txt` com cache
+frio, várias vezes, sem travar; antes travava sempre entre 100 e 150 s. Batalha a ~42 ms por quadro em média (o
+jogo pede 33), com picos de ~300 ms quando surge um efeito novo (compilação de pipeline).
 
-| Ramo | Conteúdo |
-|---|---|
-| `main` | estado bom conhecido (até a DLC e a escala travada em 1x) + documentação |
-| `wip/gpfifo-snapshot` | `main` + cópia dos pushbuffers no envio (não resolve, inofensiva) + log detalhado do método em subcanal sem classe |
+Tudo está no `main`. O ramo `wip/gpfifo-snapshot` foi incorporado (avanço rápido) e pode ser apagado.
 
-**`Jogar no PC\few.exe` hoje é o build do `wip/gpfifo-snapshot`** (o último publicado). Ele se comporta como o
-`main`, inclusive no travamento. Para voltar ao `main`: `git switch main` e `.\gerar-few.ps1 -SoBuild`.
+**Steam Deck**: build Linux com `-march=znver2` feito no WSL e enviado ao cartão SD do Deck (seção "Steam Deck").
 
 ## Como trabalhar
 
@@ -30,7 +27,10 @@ a primeira candidata (copiar os pushbuffers no envio) foi testada e não resolve
 |---|---|
 | Gerar tudo e publicar | `.\gerar-few.ps1` (`-SoBuild` pula update e geração do C) |
 | Teste sem supervisão | `powershell -File tools\run_test.ps1 -Seconds 120 -Script tools\input\prologue_battle.txt -Shots "60,100" -Tag x -Fresh` |
-| Reproduzir o travamento | `powershell -File tools\run_test.ps1 -Seconds 330 -Script tools\input\battle_long.txt -Shots "200" -Tag bl -Fresh` (apague antes `build\run\pipeline_cache.bin` e `pipeline_warmup.bin` para cache frio) |
+| Batalha longa (regressão do travamento) | `powershell -File tools\run_test.ps1 -Seconds 330 -Script tools\input\battle_long.txt -Shots "200" -Tag bl -Fresh` (apague antes `build\run\pipeline_cache.bin` e `pipeline_warmup.bin` para cache frio) |
+| Perfil da thread da GPU | `-Env "HWDER_THREAD_STATS=1"`: a cada 120 quadros, fases (`dispatch`, `gmem`, `present`…), despachos e flushes por origem |
+| Shaders e constant buffers | `-Env "HWDER_DUMP_SHADERS=1"`: `build\run\shader_<chave>_<estágio>.maxwell.txt` (SASS) e, em compute, `.cbufs.txt` (QMD + c0) |
+| Build do Steam Deck | `.\gerar-deck.ps1` (WSL archlinux, `-march=znver2`) e `bash tools/deck/enviar-para-deck.sh` (seção "Steam Deck") |
 | Prints | `build\shots\<tag>_<s>.png`; log em `build\run\hwder.log` |
 | Ajustes extras no teste | `-Ini "res_scale=2.000"`, `-Env "HWDER_GPU_TRACE=3;HWDER_IPC_TRACE=1"` |
 | Entradas descobertas em execução | o runtime grava `extra_entries.txt` ao lado do exe; `gerar-few.ps1` junta em `tools/recomp/extra_entries.txt` e regenera |
@@ -52,81 +52,95 @@ despertar, esquiva, troca de personagem, câmera), `pause_menu.txt` (abre a paus
    HWDER subtraía 1 de novo. Vídeos com 2 referências (os do FEW) saíam com macroblocos trocados.
    `video/decoder.cpp`.
 3. `fs/nsp.cpp`: com update, o ExeFS do update é o único (o FEW 1.5.0 troca o conjunto de módulos).
+4. **Pushbuffer lido entrada por entrada** (`gpu/gpu.cpp process_pushbuffer`): o estado do método (método,
+   subcanal, palavras que faltam) zerava a cada entrada do GPFIFO. No hardware o pushbuffer é um fluxo só, e os
+   dados de um método podem continuar na entrada seguinte; agora o estado fica no canal (`Channel::pb`).
 
-## Sessão de otimização (2026-11-13): o que os logs mostram
+## Sessão de 2026-11-13: batalha (travamento, memória global, desempenho)
 
-Fonte: a sessão do dono (`Jogar no PC\hwder.log`, 165 s, cache frio) e dois testes com `battle_long.txt`.
+### Travamento na batalha (resolvido)
 
-### Travamento na batalha
-
-Assinatura, igual nas três ocorrências (dono aos 156 s; testes aos 148 s e 146 s):
+Assinatura antiga, em todas as ocorrências (sessão do dono aos 156 s; testes entre 100 e 150 s):
 
 ```
-[145.594] vk: slow: graphics pipeline creation took 329 ms
-[145.594] gpu: slow: pushbuffer entry (27233) took 332 ms
 [148.797] gpu: method 0xe2e on unbound subchannel 0
 [149.829] vi: frame fence 1:37861 not reached after 1 s (value 37855) - still waiting
-... (repete a cada 10 s, para sempre)
+... (repete a cada 10 s; minutos depois "vk: error -2 ... vkAllocateMemory" e "fatal: vulkan")
 ```
 
-- Sempre logo depois de a thread da GPU ficar 100–350 ms parada (compilação síncrona de pipeline).
-- Em seguida, um método que não faz sentido: subcanal 0 "sem classe" nos testes (o 0 é o 3D, sempre ligado), e
-  `method 0x9ac on unbound subchannel 5` na sessão do dono (o NVN não usa o subcanal 5).
-- A cerca do syncpoint 1 fica **exatamente 6 incrementos** atrás do que o `vi` espera; nada mais é apresentado.
-- Não aparece espera de semáforo nem de syncpoint dentro do pushbuffer (`semaphore acquire … >100 ms`,
-  `pushbuffer syncpoint wait`), nem erro de dispositivo Vulkan.
+**Causa.** As partículas da batalha usam **draw indireto**: shaders de cálculo (culling e "append" com atômicos)
+escrevem numa área de memória quantos vértices e instâncias desenhar, e o NVN chama a macro de desenho 25
+(`topologia, contagem, instâncias, primeiro, instância base`) com os 4 últimos parâmetros vindos de uma **entrada
+do GPFIFO que aponta direto para essa memória**. Duas falhas do runtime se somavam:
 
-#### Hipótese 1, testada e descartada: memória de comandos reaproveitada
+1. o leitor do pushbuffer zerava o estado a cada entrada e lia esses 4 parâmetros como cabeçalhos de comando
+   ("method … on unbound subchannel"); a macro rodava com parâmetros a menos;
+2. com o leitor corrigido, os parâmetros chegavam inteiros, mas eram lixo (`c5c5c6c6 …`): o tradutor ignorava
+   `STG`/`RED`/`ATOM`, então ninguém escrevia aquela memória. O draw saía com ~3,3 bilhões de vértices em quads; a
+   thread da GPU ficava presa convertendo quads em índices e a memória acabava.
 
-`gpu.cpp` guarda na fila só os endereços das entradas do GPFIFO e lê os comandos da memória do guest ao executar.
-A ideia era que, com a thread da GPU parada, o jogo reaproveitasse a memória de comandos. Correção no branch
-`wip/gpfifo-snapshot`: `channel_submit` copia as palavras de cada entrada no envio (exceto `no_prefetch`;
-`HWDER_GPFIFO_LIVE=1` volta ao antigo). **Compilada e testada: travou do mesmo jeito**, aos 139 s,
-`gpu: method 0x44 on unbound subchannel 0`, cerca 1:35934 parada em 35928 (6 atrás). Dessa vez sem engasgo longo
-antes (o maior foi de 62 ms), então o engasgo não é condição necessária.
+Hipóteses descartadas no caminho: memória de comandos reaproveitada (cópia dos pushbuffers no envio: não muda nada
+e ficaria errada com argumentos que a GPU escreve depois; removida) e GPU real presa num shader (não há
+"GPU timeout waiting for serial" nem perda de dispositivo; o pós-morte mostra o Vulkan ocioso).
 
-#### O que se sabe (2026-11-13)
+**Correção** (commits `ab64c97` e `9be5df8`):
 
-- Dois canais de GPU (syncpoints 1 e 2), criados no boot; os dois ligam as classes no início (`SET_OBJECT`):
-  subcanal 0 `B197` (3D), 1 `B1C0` (compute), 2 `A140` (inline), 3 `902D` (2D), 4 `B0B5` (DMA). Visto com
-  `HWDER_GPU_TRACE=3`.
-- Os envios com `FENCE_INCREMENT` reservam `2 + extra` valores de syncpoint (`nvdrv.cpp GpuChannel::submit`): 2
-  do próprio envio (aplicados por `on_gpu_idle` ao fim de `execute_inner`) e `extra` que o pushbuffer incrementa
-  (`SYNCPOINTB`). **Faltar 6 de uma vez** cabe num envio inteiro que não terminou (2 + 4 do pushbuffer). Se fosse
-  só lixo no pushbuffer, os 2 finais ainda viriam. Isso aponta para a **thread da GPU parada dentro de um envio**
-  ou para trabalho do Vulkan que nunca conclui (os `on_gpu_idle` só disparam quando a GPU real termina).
-- Nenhuma espera do runtime registrou atraso (`semaphore acquire … >100 ms`, `pushbuffer syncpoint wait`), e não
-  há erro de dispositivo Vulkan no log. Uma espera sem log, ou um shader em laço infinito na GPU real, explicariam.
-- `HWDER_GPU_TRACE=3` é pesado demais: o jogo cai para 6–9 fps e não chega à batalha em 200 s (teste inútil para
-  o travamento). Não usar para isto.
+- estado do pushbuffer por canal (item 4 acima);
+- memória global no tradutor e cache de storage buffers no renderer (próxima seção): os argumentos agora vêm
+  certos (`0 1 0 0` quando não há partícula, por exemplo);
+- rede de segurança: uma chamada de macro com parâmetros vindos da memória é descartada se algum passar de 2^24,
+  se as instâncias passarem de 65 536 ou se contagem × instâncias passar de 2^26 (`gpu.cpp flush_macro`); um draw
+  com mais de 2^24 vértices é pulado e para a macro (`Macro::stop`). Logs: `3d: indirect macro …`,
+  `3d: skipped a draw …`.
 
-#### Hipótese 2 (a mais forte agora): compute com memória global e atômicos como no-op
+**Diagnóstico pós-morte** (fica ligado): quando a cerca de um quadro atrasa 1 s (e de novo aos 10 s), o `vi` chama
+`gpu::dump_hang_state()`: onde cada thread da GPU está parada (`gpu/hang_state.h`, marcas `hang::Where`), envio e
+entrada em execução, fila, seriais do Vulkan (próximo, enviado, timeline, concluído), callbacks pendentes e se o
+lock do renderer está preso. Linhas `hang: …` no log. Com o processo vivo, `lldb -p <pid>` do toolchain do HWDER
+(`…\managed-tools\…\llvm-mingw-…\bin\lldb.exe`, `thread backtrace all`) mostrou a pilha da thread "HWDER GPU".
 
-`LDG`, `RED`, `ATOM` e `SUST` aparecem pela primeira vez durante a batalha (141 s na sessão do dono, junto com
-três despachos de 41–48 ms). Um compute shader que espera um contador atômico mudar e sempre lê 0 pode ficar em
-laço na GPU; o fence do Vulkan não conclui, os `on_gpu_idle` não disparam, o syncpoint para. Implementação em
-"Pendências", item 2.
+### Memória global e atômicos (implementados)
 
-#### Próxima sessão: plano
+- **Descritores**: em compute o NVN deixa os storage buffers no `c0` a partir de **0x310**, 16 bytes cada
+  (`endereço baixo, endereço alto, tamanho, 0`). Medido nos dumps (`HWDER_DUMP_SHADERS`). Nos estágios gráficos a
+  base segue o padrão de 0x100 por estágio (0x110 vértice … 0x510 fragmento), **não conferido**: nenhum shader
+  gráfico do FEW usa memória global até aqui.
+- **Codificações conferidas no dump**: `LDG`/`STG` dado 0–7, endereço Ra 8–15, deslocamento com sinal 20–43, `.E`
+  no bit 45, tamanho 48–50; `ATOM` valor Rb 20–27, deslocamento 28–47, `.E` no bit 48, tipo 49–51, operação 52–55;
+  `RED` valor 0–7, endereço 8–15, tipo 20–22, operação 23–25, deslocamento 28–47, `.E` no bit 48; `ATOMS` valor
+  20–27, tipo 28–29, deslocamento em palavras 30–51, operação 52–55.
+- **Tradutor** (`shader/emit_mem.cpp`): a varredura (`scan_global_memory`) acha os descritores que o programa lê;
+  cada um vira um storage buffer (`uint data[]`, binding logo após os constant buffers). Cada acesso compara o
+  endereço de 64 bits com o descritor e indexa em palavras; quando o registrador alto do endereço foi escrito no
+  mesmo bloco a partir de `c[0][desc+4]` (o padrão do NVN: `MOV`/`IADD.X`), só aquele descritor é testado
+  (`gmem_candidates`), senão todos. Operações: ADD, MIN, MAX, AND, OR, XOR, EXCH em 32 bits com e sem sinal. Faltam
+  INC/DEC, CAS, 64 bits e float (logam `… unsupported (no-op)`). `S2R` 56–60 (máscaras de lane) implementados:
+  sem eles o "append" por warp escrevia todas as lanes no mesmo lugar.
+- **Renderer** (`gpu/vk/vk_resources.cpp gmem_bind`): um buffer host-visible com cache por início de faixa do
+  guest. Enquanto a cópia da GPU tem escrita pendente (`pending` = serial do command buffer), todo bind a usa, e os
+  despachos encadeados (contar, compactar, escrever argumentos) se enxergam; quando o command buffer conclui, a
+  thread de espera copia de volta para a memória do guest. Antes de ler uma entrada do GPFIFO, a thread da GPU
+  chama `sync_gpu_writes` e espera essa volta se a entrada cair numa faixa pendente (~3 vezes por quadro).
+  `flush_region` faz o mesmo para leituras de DMA.
 
-1. **Diagnóstico pós-morte, barato** (antes de qualquer correção): quando o `vi` registra
-   `frame fence … not reached after 1 s`, registrar o estado da thread da GPU: se está executando (qual envio,
-   syncpoint, entradas, quantos `extra`), tamanho da fila, quantos `on_gpu_idle` estão pendentes e se o último
-   fence do Vulkan foi sinalizado (`vkGetFenceStatus` ou valor do semáforo de timeline). Isso separa
-   "thread da GPU presa no runtime" de "GPU real presa num shader".
-2. Rodar `battle_long.txt` **sem trace** (cache frio) com o build do `wip/gpfifo-snapshot`, que já registra canal e
-   classes no método sem classe.
-3. Se for a GPU real presa num compute: implementar memória global e atômicos (item 2 das pendências). Teste
-   rápido possível antes disso: pular os despachos de compute cujo shader tenha `ATOM`/`RED`/`LDG` não traduzidos
-   e ver se o travamento some (diagnóstico, não correção: imagem errada não é aceitável como solução).
-4. Se for a thread da GPU presa no runtime: o pós-morte mostra onde; olhar `flush_commands`/`on_gpu_idle` em
-   `gpu/vk`.
+### Desempenho da batalha
+
+Com as partículas vivas, o jogo passa de 2 para **~450–800 despachos de compute por quadro**, com um `WaitForIdle`
+entre eles. Primeira versão: ~100 ms por quadro. Correções (thread da GPU de 97 para 34 ms por quadro):
+
+| Custo | Antes | Correção |
+|---|---|---|
+| hash do código do compute a cada despacho (FNV byte a byte, até ~100 KB) | ~45 ms | chave por endereço e forma, hash uma vez por quadro (`compute_keys_`) |
+| `WaitForIdle` do 3D virava um envio ao Vulkan (~1000 por quadro) | ~760 envios | só ordena a GPU, e as barreiras já fazem isso; `HWDER_WFI_FLUSH=1` volta ao antigo |
+| recópia guest→GPU de storage buffer a cada bind | 26 ms | só quando o write-watch acusa escrita; uma cópia de volta por command buffer |
+
+Resultado medido (`HWDER_THREAD_STATS=1`): `dispatch 4,5 ms`, `gmem 2,8 ms`, 2,2 envios por quadro, média de
+~42 ms por quadro (33 pedidos), picos de ~300 ms em efeito novo.
 
 ### Taxa de quadros
 
-- Menus a 60 fps estáveis. Batalha a ~30 fps: `display: … avg 33–35 ms … limiter 32.6 ms` com a thread da GPU
-  ocupada só 6–7 ms por quadro (1.100–1.300 draws). **É o jogo pedindo 30 Hz** (swap interval 2), não falta de
-  desempenho do PC.
+- Menus a 60 fps estáveis. Na batalha **o jogo pede 30 Hz** (swap interval 2). Antes das partículas a batalha
+  ficava em 33–35 ms; com elas, ~42 ms (pendência 1).
 - Para 60 fps na batalha há dois caminhos: (a) uma opção de taxa de quadros do próprio jogo, se existir, que só
   aparece depois do prólogo (a pausa do prólogo não tem menu, conferido com `pause_menu.txt`); (b) os relógios de
   frame do KTGL, como o AoC-Recomp fez (três relógios; mexer só no intervalo acelera o jogo). (b) depende dos
@@ -139,33 +153,47 @@ laço na GPU; o fence do Vulkan não conclui, os `on_gpu_idle` não disparam, o 
   render target compilam de forma síncrona para não mostrar um quadrado preto. `HWDER_ASYNC_RT_PIPELINES=1` troca
   por assíncrono (com risco de falha visual de um quadro).
 - Os caches em `Jogar no PC` (`pipeline_cache.bin`, `pipeline_warmup.bin`) crescem a cada sessão e o
-  pré-aquecimento os compila na abertura seguinte; os engasgos diminuem com o uso. O travamento, não.
+  pré-aquecimento os compila na abertura seguinte; os engasgos diminuem com o uso. Na primeira vez, os shaders de
+  cálculo grandes da batalha levavam segundos para compilar até `gmem_candidates` (um descritor por acesso).
 - Outros números da sessão: `skipped_draws` 486 (draws pulados enquanto o pipeline compila em segundo plano),
   `vk: 120 draws into already-presented buffers` (o quadro apresentado antes de terminar).
 
+## Steam Deck
+
+O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cartão SD; o Deck não compila nada.
+
+- **Build** (`.\gerar-deck.ps1`, depois de um `gerar-few.ps1`): `tools/deck/build-deck-wsl.sh` copia `runtime`,
+  `tools`, `third_party` e o C gerado (`generated\`, o mesmo do Windows: só caminhos relativos) para
+  `/root/few/src` no ext4 do WSL e chama `build.py` com o toolchain Linux do HWDER v0.3.5, já instalado em
+  `/root/hwder/data/HWDER/toolchain/<id>` (Zig/Clang mirando glibc 2.35, CMake, Ninja), as dependências
+  estáticas da release Linux oficial (`/root/hwder/release/HWDER-linux-x86_64-v0.3.5/linux-deps`: SDL3, FFmpeg,
+  libcrypto) e `-DHW_MARCH=znver2` (o Zig passa `-target-cpu znver2`). Saída: `/root/few/build-deck/few`.
+  O C gerado leva ~1 h com 6 jobs (o WSL tem 10 GB; ~470 MB por compilação); depois, só o runtime recompila.
+- **Pasta** `Envio Deck\FireEmblemWarriors` (ignorada pelo git), sem caminho fixo: `few`, NSP base e as 5 DLCs e
+  as chaves por hardlink (o jogo pega o `.nsp` de nome menor, que é o da base, e acha as DLCs na mesma pasta),
+  `update\` (hardlinks de `data\update`; `update_path=update` no `.ini`), `hwder_settings.ini`, `few-steam.sh`,
+  `instalar-no-deck.sh` (atalho na Steam via `tools/steam_shortcut.py`), `LEIA-ME.txt`. ~19,8 GB.
+  `-SoDados` monta sem o binário, para ir enviando enquanto o WSL compila.
+- **Envio** (Git Bash): `bash tools/deck/enviar-para-deck.sh` (sem argumento: `Games/FireEmblemWarriors` no primeiro
+  cartão com pasta `Games`). Por SSH com `~/.ssh/<chave-do-deck>`, usuário `deck`, IP `<ip-do-deck>` (DHCP;
+  `DECK_HOST=deck@<ip>`). Só o que mudou, retoma arquivo cortado, confere SHA-256 nos dois lados, mantém o `.ini`
+  do Deck (`ENVIAR_INI=1` sobrescreve). O Deck precisa estar acordado; o SteamOS nega `systemd-inhibit` por SSH.
+- **No Deck**: `/run/media/deck/<cartao>/Games/FireEmblemWarriors` (SD ext4, SteamOS
+  3.9.5, APU AMD Custom 0405). Atalho na Steam: no Modo Desktop, na pasta, `sh instalar-no-deck.sh` (fecha e
+  reabre a Steam). O write-watch no Linux usa `userfaultfd` + `PAGEMAP_SCAN` (kernel 6.7+, o SteamOS tem).
+
 ## Pendências, por prioridade
 
-1. **Travamento na batalha**: seguir o plano em "Próxima sessão" acima. Quando resolver, juntar ao `main`,
-   publicar e pedir ao dono uma sessão longa.
-2. **Memória global e atômicos no tradutor** (`LDG`/`STG`/`ATOM`/`ATOMS`/`RED`, também `SUST`, `AL2P` + `IPA`
-   indexado, `S2R SR 57`; hoje no-op). Notas de projeto, nada implementado:
-   - O caminho de storage buffer do renderer (`vk_resources.cpp`, laço `storage_buffers`) **copia** o buffer do
-     guest a cada draw/despacho e só devolve o resultado ao fim da GPU: dois despachos que se comunicam pelo mesmo
-     buffer veriam dado velho. Nunca foi usado (o tradutor não gera storage buffers).
-   - Melhor caminho: importar a memória do guest como `VkBuffer` com `VK_EXT_external_memory_host` (já habilitada
-     em `display.cpp`, sem uso; `vkGetMemoryHostPointerPropertiesEXT` já está no loader), com cache por faixa de
-     páginas e barreira de memória depois de despachos que escrevem.
-   - No shader, sem análise de fluxo de dados (abordagem do Ryujinx, MIT): comparar o endereço com os 16
-     descritores {endereço 64 bits, tamanho} que o NVN deixa no `c0` e acessar um array de storage buffers com
-     índice dinâmico (+1 elemento de rascunho para "nenhum"). Isso pede um campo `count` em `StorageBufferUse`
-     (`shader.h`), no layout (`vk_pipelines.cpp`), na ligação (`vk_resources.cpp`) e no cache de pipelines
-     (`pipeline_warmup_cache.cpp`, subir `kVersion`).
-   - **A conferir no dump antes de usar** (lembrados do Ryujinx, não verificados): base dos descritores no `c0`
-     por estágio 0x110 (vértice), +0x100 por estágio (0x210 TCS, 0x310 TES, 0x410 GS, 0x510 fragmento),
-     0x310 em compute; campos: `LDG`/`STG` endereço em Ra (64 bits com o bit 45 `.E`), imediato com sinal nos bits
-     20–43, tamanho nos bits 48–50; `ATOM` Rb 20–27, imediato de 20 bits em 28, tamanho 49–51, operação 52–55,
-     `.E` no bit 48; `RED` valor em 0–7, tamanho 20–22, operação 23–25, imediato em 28; `ATOMS` deslocamento de 22
-     bits em 30 (×4), tamanho 28–29, operação 52–55.
+1. **Ritmo da batalha**: ~42 ms por quadro em média para 33 pedidos, e picos de ~300 ms. Pistas, em ordem:
+   (a) a fase `present` do perfil (~20 ms por quadro; o perfil soma a thread do `vi`, que apresenta, à da GPU):
+   ver se é espera do apresentador;
+   (b) as esperas por escrita de shader (`vk: waiting for shader writes …`, ~3 por quadro, cada uma esvazia a GPU):
+   o caminho de vez é o do yuzu, desenhar o indireto na própria GPU (`vkCmdDrawIndirect` lendo o buffer onde o
+   compute escreveu), mas a macro 25 desenha quads, que hoje viram índices na CPU; (c) compilação de pipeline
+   síncrona (seção "Engasgos").
+2. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
+   gráficos (não conferida); `SUST` (escrita em imagem, no-op), `AL2P` + `IPA` indexado, `TEX` com AOFFI não
+   constante. Todos logam uma vez com `[shader]`.
 3. **60 fps na batalha** (seção "Taxa de quadros").
 4. **Escala de resolução > 1x**: travada em 1x (`texture_cache.cpp res_scale_allowed`). Em 2x a composição cobre
    só o quadrante superior esquerdo. Diagnóstico provável, não confirmado: passes (compute, ou fetches a partir de
@@ -178,7 +206,9 @@ laço na GPU; o fence do Vulkan não conclui, os `on_gpu_idle` não disparam, o 
    compara corpos de função) e só então religar.
 6. **Nomes do save**: o jogo grava `system` em `save/0100F15003E64000/<usuário>/`; os do progresso ainda não foram
    vistos. Ajustar `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
-7. **Steam Deck / Linux**: o caminho do HWDER (`tools/linux_setup.py`, build no WSL) ainda não foi adaptado.
+7. **Steam Deck**: medir a batalha no aparelho (o Zen 2 a 2,4–3,5 GHz é mais lento que o i5-11400H por núcleo; a
+   thread da GPU, 34 ms por quadro no PC, é o gargalo provável) e montar a medição como a do HWDER
+   (fora deste repositório).
 
 ## Armadilhas já encontradas
 

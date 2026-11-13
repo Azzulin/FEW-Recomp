@@ -13,11 +13,11 @@ módulos e quase o mesmo SDK (3.7.0 contra 3.5.1). Detalhes em [docs/few.md](doc
 
 ## Estado
 
-Roda nativo no Windows: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo, com as cinco DLCs
-montadas pelo jogo. **Trava na batalha do prólogo depois de ~30–50 s de luta**, ainda sem correção; análise e
-plano em [docs/handover.md](docs/handover.md#travamento-na-batalha). Os extras do HWDER que dependem de endereços do Hyrule
-Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução fica
-em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
+Roda nativo no Windows e no Steam Deck: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo
+(com as partículas da GPU), com as cinco DLCs montadas pelo jogo. O travamento da batalha foi resolvido; a batalha
+ainda fica abaixo dos 30 fps que o jogo pede em alguns trechos. Os extras do HWDER que dependem de endereços do
+Hyrule Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução
+fica em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
 
 ## Arquivos do jogo
 
@@ -41,6 +41,18 @@ prod.keys                                                     # na raiz ou em Ga
 Usa o toolchain privado do HWDER (Python, LLVM-MinGW, CMake, Ninja), sem Visual Studio e sem admin; se ele não
 existir na máquina, o script instala um igual (`tools/managed_tools.py`). Saídas: `data\update` (update
 desempacotado), `generated\` (C), `build\pc` (objetos), `Jogar no PC\few.exe`. Tudo ignorado pelo git.
+
+## Steam Deck
+
+```powershell
+.\gerar-deck.ps1                          # depois do gerar-few.ps1: build Linux no WSL para o Zen 2 do Deck
+bash tools/deck/enviar-para-deck.sh       # Git Bash: envia por SSH à pasta Games do cartão SD
+```
+
+Compila no WSL (archlinux) com o toolchain Linux do HWDER (glibc 2.35) e `-march=znver2`, monta
+`Envio Deck\FireEmblemWarriors` (jogo, NSPs e chaves por hardlink, update, ajustes) e envia. No Deck, uma vez:
+`sh instalar-no-deck.sh` na pasta do jogo cria o atalho na Steam. Detalhes em
+[docs/handover.md](docs/handover.md#steam-deck).
 
 ## Licença
 
