@@ -188,8 +188,8 @@ struct H264Info {
     u32 height_mbs() const { return u32_at(0x68); }
     u32 entropy_coding_mode() const { return u32_at(0x70); }
     s32 pic_order_present() const { return s32_at(0x74); }
-    s32 num_ref_l0() const { return s32_at(0x78); }
-    s32 num_ref_l1() const { return s32_at(0x7C); }
+    s32 num_ref_l0() const { return s32_at(0x78); }  // num_ref_idx_l0_default_active_minus1
+    s32 num_ref_l1() const { return s32_at(0x7C); }  // num_ref_idx_l1_default_active_minus1
     s32 deblocking_control_present() const { return s32_at(0x80); }
     s32 redundant_pic_cnt_present() const { return s32_at(0x84); }
     u32 transform_8x8() const { return u32_at(0x88); }
@@ -246,7 +246,12 @@ std::vector<u8> build_headers(const H264Info& p) {
         s.se(0);
         s.ue(0);
     }
-    s.ue(16);  // max_num_ref_frames
+    // max_num_ref_frames: the parameter block does not carry it, so allow as many as the DPB holds, but fewer than
+    // MaxFrameNum, so no kept reference can share the current picture's frame_num (Fire Emblem Warriors' movies use
+    // log2_max_frame_num = 4, MaxFrameNum 16; the streams themselves keep 2 references).
+    const u32 max_frame_num = 1u << (p.field(8, 4) + 4);
+    const u32 max_refs = std::min(16u, max_frame_num - 1);
+    s.ue(max_refs);  // max_num_ref_frames
     s.bit(0);  // gaps_in_frame_num_allowed
     s.ue(p.width_mbs() - 1);
     u32 frame_mbs_only = p.frame_mbs_only() ? 1 : 0;
@@ -274,7 +279,7 @@ std::vector<u8> build_headers(const H264Info& p) {
     s.ue(16);   // log2_max_mv_length_horizontal
     s.ue(16);   // log2_max_mv_length_vertical
     s.ue(0);    // max_num_reorder_frames
-    s.ue(16);   // max_dec_frame_buffering
+    s.ue(max_refs);  // max_dec_frame_buffering (>= max_num_ref_frames)
     s.trailing();
     s.emit_nal(out, 0x67);
 
@@ -285,8 +290,11 @@ std::vector<u8> build_headers(const H264Info& p) {
     q.bit(p.entropy_coding_mode() ? 1 : 0);
     q.bit(p.pic_order_present() ? 1 : 0);
     q.ue(0);  // slice groups
-    q.ue((u32)std::max(0, p.num_ref_l0() - 1));
-    q.ue((u32)std::max(0, p.num_ref_l1() - 1));
+    // The parameter block holds num_ref_idx_l{0,1}_default_active_minus1 already (Fire Emblem Warriors' movies:
+    // 1 and 0 for a PPS with 2 and 1 references). Subtracting again told the decoder 1 list-0 reference, so every
+    // slice without an override read its ref_idx_l0 fields wrong; Hyrule Warriors' movies (1 reference) hid it.
+    q.ue((u32)std::max(0, p.num_ref_l0()));
+    q.ue((u32)std::max(0, p.num_ref_l1()));
     q.bit(p.flag(2));          // weighted_pred
     q.bits(p.field(32, 2), 2); // weighted_bipred_idc
     q.se(p.sfield(16, 6));     // pic_init_qp_minus26
@@ -331,11 +339,15 @@ public:
             return;
         }
         IMFAttributes* attr = nullptr;
+        // HWDER_NVDEC_LOW_LATENCY=0 turns Media Foundation's low-latency mode off (B-frame decoding experiments).
+        const char* ll = getenv("HWDER_NVDEC_LOW_LATENCY");
+        const BOOL low_latency = !(ll && ll[0] == '0');
         if (SUCCEEDED(mft_->GetAttributes(&attr)) && attr) {
-            attr->SetUINT32(CODECAPI_AVLowLatencyMode, TRUE);
-            attr->SetUINT32(MF_LOW_LATENCY, TRUE);
+            attr->SetUINT32(CODECAPI_AVLowLatencyMode, low_latency);
+            attr->SetUINT32(MF_LOW_LATENCY, low_latency);
             attr->Release();
         }
+        if (!low_latency) hw_log("nvdec: Media Foundation low-latency mode off");
         IMFMediaType* in = nullptr;
         MFCreateMediaType(&in);
         in->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
@@ -727,6 +739,37 @@ void nvdec_execute(host1x::ChannelState& st) {
     au.insert(au.end(), bits, bits + len);
     u32 pic = info.field(34, 7);
     u32 luma = (u32)((st.regs[0x10C + (pic < 17 ? pic : 0)] << 8) + ((u64)info.luma_frame_offset() << 8));
+
+    // HWDER_NVDEC_TRACE: the parameter-block fields that go into the synthesized SPS/PPS, and each slice's NAL type
+    // and slice_type, for the first pictures (compare with tools/movie_info.py on the movie file).
+    static const bool trace = getenv("HWDER_NVDEC_TRACE") != nullptr;
+    static int traced = 0;
+    if (trace && traced < 400) {
+        traced++;
+        std::string sl;
+        for (u32 i = 0; i + 4 < len && sl.size() < 120; i++) {
+            if (bits[i] || bits[i + 1] || bits[i + 2] != 1) continue;
+            u8 nal = bits[i + 3];
+            // first_mb_in_slice ue(v), slice_type ue(v): decode two Exp-Golomb codes from the next bytes.
+            u32 pos = 0;
+            auto bit = [&](u32 p) { u32 o = i + 4 + p / 8; return o < len ? (bits[o] >> (7 - p % 8)) & 1 : 0; };
+            auto ue = [&]() { u32 z = 0; while (z < 32 && !bit(pos)) { z++; pos++; } pos++; u32 v = 0; for (u32 k = 0; k < z; k++) v = (v << 1) | bit(pos++); return (1u << z) - 1 + v; };
+            char tmp[32];
+            if ((nal & 0x1F) == 1 || (nal & 0x1F) == 5) {
+                u32 first = ue(), type = ue();
+                snprintf(tmp, sizeof(tmp), " %u/%c@%u", nal & 0x1F, "PBIpi"[type % 5], first);
+            } else {
+                snprintf(tmp, sizeof(tmp), " %u", nal & 0x1F);
+            }
+            sl += tmp;
+            i += 3;
+        }
+        hw_log("nvdec-trace: pic %u len %u fn%u poc%u/%d l0 %d l1 %d wp %u bi %u t8 %u cabac %u pop %d dbk %d qp %d cqp %d/%d chroma %u ref %u |%s",
+               pic, len, info.field(8, 4), info.field(14, 2), info.log2_max_poc_lsb_minus4(), info.num_ref_l0(),
+               info.num_ref_l1(), info.flag(2), info.field(32, 2), info.transform_8x8(), info.entropy_coding_mode(),
+               info.pic_order_present(), info.deblocking_control_present(), info.sfield(16, 6), info.sfield(22, 5),
+               info.sfield(27, 5), info.field(12, 2), info.flag(4), sl.c_str());
+    }
 
     queue_decode({&st, std::move(au), luma});
 }
