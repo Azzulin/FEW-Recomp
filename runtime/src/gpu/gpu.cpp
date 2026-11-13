@@ -874,7 +874,16 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
     case 0xB0B5: method_dma(ch, method, value); break;
     case 0x902D: method_2d(ch, method, value); break;
     case 0xA140: method_i2m(ch, method, value); break;
-    default: LOG_ONCE("gpu: method 0x%x on unbound subchannel %u", method, subch); break;
+    default: {
+        // Which channel, which value and what the channel has bound: a method here usually means the pushbuffer is
+        // being parsed from the wrong place, or a channel that never got its SET_OBJECTs.
+        static int logged = 0;
+        if (logged++ < 20)
+            hw_log("gpu[sp%u]: method 0x%x = 0x%08x on unbound subchannel %u (classes %x %x %x %x %x %x %x %x)", ch->syncpt,
+                   method, value, subch, ch->bound_class[0], ch->bound_class[1], ch->bound_class[2], ch->bound_class[3],
+                   ch->bound_class[4], ch->bound_class[5], ch->bound_class[6], ch->bound_class[7]);
+        break;
+    }
     }
 }
 
