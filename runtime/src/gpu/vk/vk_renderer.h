@@ -87,6 +87,8 @@ u64 submitted_serial();  // highest serial submitted to the queue so far
 // vkQueueSubmit calls and their total time since the last call (the periodic frame log).
 void submit_stats_reset(u64* submits, double* ms);
 void waiter_thread();
+// Post-mortem of a stuck frame: serials, queues and locks of the scheduler (gpu::dump_hang_state).
+void sched_dump_hang_state(bool renderer_locked);
 void full_barrier(VkCommandBuffer cb);
 void run_graveyard();  // present: destroy what the graveyard holds once the GPU and presenter are done with it
 
@@ -516,6 +518,11 @@ public:
     void wait_idle() override {
         std::lock_guard<std::recursive_mutex> l(m_);
         g_rec.wait_idle();
+    }
+    void dump_hang_state() override {
+        bool free = m_.try_lock();
+        if (free) m_.unlock();
+        sched_dump_hang_state(!free);
     }
     void present(const FramebufferInfo& fb) override;
 

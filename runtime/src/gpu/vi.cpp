@@ -386,6 +386,7 @@ private:
                     if (++waited == 1 || waited % 10 == 0)
                         hw_log("vi: frame fence %u:%u not reached after %d s (value %u) - still waiting", q.in.fence.fences[i].id,
                                q.in.fence.fences[i].value, waited, nv::syncpoint_read(q.in.fence.fences[i].id));
+                    if (waited == 1 || waited == 10) gpu::dump_hang_state();
                 }
             }
             host::timeline("comp fence done", (unsigned long long)q.slot);

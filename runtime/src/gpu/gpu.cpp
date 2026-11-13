@@ -1,6 +1,7 @@
 // GPU command processor: GPFIFO entries -> pushbuffer methods -> engines.
 #include "gpu.h"
 #include "gpu/diag.h"
+#include "gpu/hang_state.h"
 
 #include "host/timing.h"
 #include "host/sampler.h"
@@ -72,10 +73,12 @@ public:
     u32 code[0x2000] = {};
     u32 start[0x80] = {};
     u32 code_ptr = 0, start_ptr = 0;
+    bool stop = false;  // set by a write of the running macro: stop it (a draw loop fed with garbage parameters)
 
     // Execute macro `index` with parameters; writes go to send(ctx, method, value) (a callable: inlined into the loop).
     template <class Send>
     void run(u32 index, const std::vector<u32>& params, void* ctx, Send send) {
+        stop = false;
         u32 regs[8] = {};
         u32 pc = start[index & 0x7F];
         u32 method = 0, increment = 0;
@@ -100,7 +103,7 @@ public:
         };
         bool exiting = false;
         s32 delayed_jump = -1;
-        for (u32 steps = 0; steps < 0x100000; steps++) {
+        for (u32 steps = 0; steps < 0x100000 && !stop; steps++) {
             u32 in = code[pc & 0x1FFF];
             u32 op = in & 7, assign = (in >> 4) & 7, dst = (in >> 8) & 7, ra = (in >> 11) & 7, rb = (in >> 14) & 7;
             s32 imm = (s32)in >> 14;
@@ -191,6 +194,9 @@ struct Engine3D {
     // pending macro call
     s32 macro_index = -1;
     std::vector<u32> macro_params;
+    // Parameters of the pending call from macro_indirect_from on arrived in a later GPFIFO entry: NVN's indirect draws
+    // point that entry at the argument buffer (written by a compute shader), so they are data from memory.
+    s32 macro_indirect_from = -1;
     // draw state
     bool indexed = false;
     u32 instance = 0;
@@ -249,7 +255,14 @@ struct Channel {
     EngineI2M i2m3d, i2m_compute, i2m;
     // puller (GPFIFO class) state
     u32 sem_addr_hi = 0, sem_addr_lo = 0, sem_payload = 0, syncpt_payload = 0, reference = 0;
+    // Method header being fed. The pushbuffer is one stream and GPFIFO entries are only segments of it: a method's
+    // data may continue in the next entry (or submission), so this survives entry boundaries, as on hardware.
+    struct {
+        u32 method = 0, subch = 0, count = 0;
+        u8 mode = 0;  // PbInc / PbNonInc / PbIncOnce
+    } pb;
 };
+enum : u8 { PbInc, PbNonInc, PbIncOnce };
 
 // ------------------------------------------------------------------ inline to memory
 static void i2m_launch(Channel* ch, EngineI2M& e, const u32* r, u32 launch) {
@@ -387,7 +400,23 @@ static void report_semaphore(Engine3D& e, u32 query) {
 }
 
 // ------------------------------------------------------------------ 3D engine
+static int g_split_logs = 0;  // GPFIFO entries that continue a method, logged so far (first 3)
 static void draw(Engine3D& e, bool indexed, u32 first, u32 count, u32 topology) {
+    // No real draw comes near this size. NVN's indirect draws (a macro call whose parameters are read from memory a
+    // compute shader fills) get random counts while that memory holds anything else, and the renderer allocates per
+    // vertex (quad lists are converted to triangle indices on the CPU): a count of 3e9 meant a GPU thread stuck for
+    // good and, minutes later, out of memory. Skip it, and stop the macro issuing it: its instance count comes from
+    // the same memory, and looping on it cost ~100 ms per call even with every draw skipped.
+    constexpr u32 kMaxDrawCount = 1u << 24;
+    if (count > kMaxDrawCount) {
+        static u64 skipped = 0;
+        skipped++;
+        if (skipped <= 3 || (skipped & (skipped - 1)) == 0)
+            hw_log("3d: skipped a draw of %u %s (first %u, topology %u); %llu skipped so far", count,
+                   indexed ? "indices" : "vertices", first, topology, (unsigned long long)skipped);
+        e.mme.stop = true;
+        return;
+    }
     DrawParams p;
     p.indexed = indexed;
     p.topology = topology;
@@ -453,7 +482,33 @@ static void flush_macro(Engine3D& e) {
     e.mme.ctx_read_ = macro_read;
     std::vector<u32> params;
     params.swap(e.macro_params);
-    e.mme.run(index, params, &e, [](void* ctx, u32 method, u32 value) { macro_send(ctx, method, value); });
+    const s32 from_memory = e.macro_indirect_from;
+    e.macro_indirect_from = -1;
+    bool run = true;
+    if (from_memory >= 0 && (size_t)from_memory < params.size()) {
+        // An indirect draw: its arguments were read from memory, filled by a compute shader. When that memory holds
+        // anything else (a compute shader the translator could not run) the counts are garbage: billions of vertices,
+        // or millions drawn once per instance (the macro loops over the instance count). NVN's indirect arguments
+        // start with the vertex/index count and the instance count; no real draw comes near these limits, and every
+        // other argument (first vertex/index, base instance) stays below 2^24. Skip such a call whole.
+        const u32* a = params.data() + from_memory;
+        const size_t na = params.size() - (size_t)from_memory;
+        for (size_t k = 0; k < na; k++)
+            if (a[k] >= (1u << 24)) run = false;
+        if (na >= 2 && (a[1] > (1u << 16) || (u64)a[0] * a[1] > (1ull << 26))) run = false;
+        static u64 calls = 0, skipped = 0;
+        calls++;
+        if (!run) skipped++;
+        if (calls <= 3 || (!run && (skipped & (skipped - 1)) == 0)) {
+            char buf[160];
+            int n = 0;
+            for (size_t k = 0; k < params.size() && k < 12; k++) n += snprintf(buf + n, sizeof(buf) - n, " %08x", params[k]);
+            hw_log("3d: indirect macro %u call, %zu params (%zu from memory):%s -> %s; %llu of %llu indirect calls skipped",
+                   index, params.size(), params.size() - (size_t)from_memory, buf, run ? "run" : "skipped",
+                   (unsigned long long)skipped, (unsigned long long)calls);
+        }
+    }
+    if (run) e.mme.run(index, params, &e, [](void* ctx, u32 method, u32 value) { macro_send(ctx, method, value); });
     // Hand the buffer back (keeps its capacity: no allocation per macro call) unless the macro started another one.
     if (e.macro_params.empty()) {
         params.clear();
@@ -819,6 +874,7 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
             } else if (op == 1 || op == 4 || op == 8) {  // acquire (equal / >= / and)
                 renderer()->flush_commands();
                 GpuWaitTimer wt(kGpuWaitSem);
+                hang::Where hw("semaphore acquire", a);
                 u64 t0 = host::ticks_ms();
                 bool logged = false;
                 for (int spin = 0;; spin++) {
@@ -852,6 +908,7 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
             } else {
                 renderer()->flush_commands();
                 GpuWaitTimer wt(kGpuWaitSyncpt);
+                hang::Where hw("pushbuffer syncpoint wait", ((u64)id << 32) | ch->syncpt_payload);
                 if (!nv::syncpoint_wait(id, ch->syncpt_payload, 100 * 1000000)) {
                     hw_log("gpu[sp%u]: pushbuffer syncpoint wait %u >= %u (value %u) >100 ms", ch->syncpt, id, ch->syncpt_payload,
                            nv::syncpoint_read(id));
@@ -898,47 +955,60 @@ static inline void put_method(Channel* ch, u32 subch, u32 method, u32 value) {
 
 static void process_pushbuffer(Channel* ch, const u32* words, u32 count) {
     diag::ProfScope ps(diag::kProfPushbuf);
+    auto& st = ch->pb;
+    // The rest of a 3D macro call's parameters in a new entry: data read from memory (see Engine3D::macro_indirect_from).
+    if (st.count && st.method >= m3d::MacroStart && ch->bound_class[st.subch] == 0xB197 && ch->e3d.macro_index >= 0)
+        ch->e3d.macro_indirect_from = (s32)ch->e3d.macro_params.size();
     u32 i = 0;
     while (i < count) {
         // The guest just wrote these words on another core: fetch a few cache lines ahead.
         __builtin_prefetch(words + i + 64);
-        u32 h = words[i++];
-        u32 method = h & 0xFFF, subch = (h >> 13) & 7, n = (h >> 16) & 0x1FFF, op = h >> 29;
-        switch (op) {
-        case 1:  // incrementing
-            for (u32 k = 0; k < n && i < count; k++) put_method(ch, subch, method + k, words[i++]);
-            break;
-        case 3:  // non-incrementing
-            for (u32 k = 0; k < n && i < count; k++) put_method(ch, subch, method, words[i++]);
-            break;
-        case 4:  // immediate data in the header
-            put_method(ch, subch, method, n);
-            break;
-        case 5:  // increment once
-            for (u32 k = 0; k < n && i < count; k++) put_method(ch, subch, method + (k ? 1 : 0), words[i++]);
-            break;
-        case 0: {  // GRP0: tert op in bits 16-17 (0: legacy increment)
-            if (h == 0) break;  // NOP
-            u32 tert = (h >> 16) & 3;
-            if (tert == 0) {
-                n = (h >> 18) & 0x7FF;
-                for (u32 k = 0; k < n && i < count; k++) put_method(ch, subch, method + k, words[i++]);
+        if (st.count) {  // data of the current method, possibly begun in an earlier entry
+            const u32 take = std::min(st.count, count - i);
+            for (u32 k = 0; k < take; k++) {
+                put_method(ch, st.subch, st.method, words[i++]);
+                if (st.mode == PbInc) {
+                    st.method++;
+                } else if (st.mode == PbIncOnce) {
+                    st.method++;
+                    st.mode = PbNonInc;
+                }
             }
-            break;
-        }
-        case 2: {  // GRP2: legacy non-incrementing
-            u32 tert = (h >> 16) & 3;
-            if (tert == 0) {
-                n = (h >> 18) & 0x7FF;
-                for (u32 k = 0; k < n && i < count; k++) put_method(ch, subch, method, words[i++]);
+            st.count -= take;
+            if (st.count) {
+                static int logged = 0;
+                if (logged++ < 10)
+                    hw_log("gpu[sp%u]: method 0x%x on subchannel %u continues in the next GPFIFO entry (%u words left)",
+                           ch->syncpt, st.method, st.subch, st.count);
+                return;
             }
-            break;
-        }
-        case 7:  // end of segment
-            return;
-        default:
-            LOG_ONCE("gpu: pushbuffer sec_op %u", op);
-            break;
+        } else {
+            u32 h = words[i++];
+            u32 method = h & 0xFFF, subch = (h >> 13) & 7, n = (h >> 16) & 0x1FFF, op = h >> 29;
+            switch (op) {
+            case 1: st.method = method, st.subch = subch, st.count = n, st.mode = PbInc; break;      // incrementing
+            case 3: st.method = method, st.subch = subch, st.count = n, st.mode = PbNonInc; break;   // non-incrementing
+            case 5: st.method = method, st.subch = subch, st.count = n, st.mode = PbIncOnce; break;  // increment once
+            case 4:  // immediate data in the header
+                put_method(ch, subch, method, n);
+                break;
+            case 0: {  // GRP0: tert op in bits 16-17 (0: legacy increment)
+                if (h == 0) break;  // NOP
+                if (((h >> 16) & 3) == 0) st.method = method, st.subch = subch, st.count = (h >> 18) & 0x7FF, st.mode = PbInc;
+                break;
+            }
+            case 2: {  // GRP2: legacy non-incrementing
+                if (((h >> 16) & 3) == 0)
+                    st.method = method, st.subch = subch, st.count = (h >> 18) & 0x7FF, st.mode = PbNonInc;
+                break;
+            }
+            case 7:  // end of segment
+                return;
+            default:
+                LOG_ONCE("gpu: pushbuffer sec_op %u", op);
+                break;
+            }
+            if (st.count) continue;  // its data follows
         }
         // A macro call's parameters end with the command that carries them.
         if (ch->e3d.macro_index >= 0) flush_macro(ch->e3d);
@@ -979,16 +1049,25 @@ static u64 g_exec_gi_tag = 0;
 u64 exec_gi_tag() { return g_exec_gi_tag; }
 static u64 g_exec_count = 0;
 u64 exec_count() { return g_exec_count; }
+// The submission the GPU thread is executing, for dump_hang_state (read from another thread).
+static std::atomic<Channel*> g_cur_ch{nullptr};
+static std::atomic<u32> g_cur_entry{0}, g_cur_entries{0}, g_cur_inc{0};
+static std::atomic<u64> g_cur_t0{0}, g_done_count{0};
 static void execute_inner(Channel* ch, Submission& s) {
     ch->syncpt = s.syncpoint;
     g_exec_gi_tag = s.gi_tag;
     g_exec_count++;
+    g_cur_ch.store(ch, std::memory_order_relaxed);
+    g_cur_entries.store((u32)s.entries.size(), std::memory_order_relaxed);
+    g_cur_inc.store(s.increment ? s.increment_count : 0, std::memory_order_relaxed);
+    g_cur_t0.store(host::ticks_ms(), std::memory_order_relaxed);
     static const char* tr = debug::str(debug::GpuTrace);
     if (tr && tr[0] == '3')
         hw_log("gpu[sp%u]: --- submission: %zu entries, wait %d, increment %d x%u", ch->syncpt, s.entries.size(), (int)s.wait,
                (int)s.increment, s.increment_count);
     if (s.wait) {
         GpuWaitTimer wt(kGpuWaitFence);
+        hang::Where hw("submission fence wait", ((u64)s.wait_fence.id << 32) | s.wait_fence.value);
         // Bounded so a fence that can only be produced by later queued work cannot wedge the GPU thread.
         while (!nv::syncpoint_wait(s.wait_fence.id, s.wait_fence.value, 100 * 1000000)) {
             audit::fence_timeouts.fetch_add(1, std::memory_order_relaxed);
@@ -1002,29 +1081,36 @@ static void execute_inner(Channel* ch, Submission& s) {
         const GpEntry& e = s.entries[ei];
         u32 n = e.words();
         if (!n) continue;  // control entry
-        const u32 snap = ei < s.snap_off.size() ? s.snap_off[ei] : ~0u;
-        const u32* words = nullptr;
-        if (snap != ~0u) {
-            words = s.snapshot.data() + snap;  // copied at submit (channel_submit)
-        } else {
-            u64 va = e.address();
-            words = (const u32*)ch->mm->translate(va);
-            if (!words || ch->mm->contiguous_size(va, (u64)n * 4) < (u64)n * 4) {
-                buf.resize(n);
-                ch->mm->read(va, buf.data(), (u64)n * 4);
-                words = buf.data();
-            }
+        u64 va = e.address();
+        const u32* words = (const u32*)ch->mm->translate(va);
+        if (!words || ch->mm->contiguous_size(va, (u64)n * 4) < (u64)n * 4) {
+            buf.resize(n);
+            ch->mm->read(va, buf.data(), (u64)n * 4);
+            words = buf.data();
+        }
+        if (ch->pb.count && g_split_logs < 3) {  // this entry carries the rest of a method begun in the previous one
+            g_split_logs++;
+            char wbuf[128];
+            int wn = 0;
+            for (u32 k = 0; k < std::min<u32>(n, 8); k++) wn += snprintf(wbuf + wn, sizeof(wbuf) - wn, " %08x", words[k]);
+            hw_log("gpu[sp%u]: entry %zu/%zu at 0x%llx (%u words, no_prefetch %d) continues method 0x%x:%s", ch->syncpt, ei,
+                   s.entries.size(), (unsigned long long)va, n, (int)e.no_prefetch(), ch->pb.method, wbuf);
         }
         OpTimer t("pushbuffer entry", n, 60.0);
+        g_cur_entry.store((u32)ei, std::memory_order_relaxed);
         process_pushbuffer(ch, words, n);
     }
-    renderer()->flush_commands();
+    {
+        hang::Where hw("end of submission flush");
+        renderer()->flush_commands();
+    }
     if (s.increment) {
         u32 id = s.syncpoint, count = s.increment_count;
         renderer()->on_gpu_idle([id, count] {
             for (u32 i = 0; i < count; i++) nv::syncpoint_increment(id);
         });
     }
+    g_done_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 static void gpu_thread() {
@@ -1033,12 +1119,14 @@ static void gpu_thread() {
         const char* log = debug::str(debug::Log);
         host::sample_current_thread(us, std::string(log && *log ? log : "hwder.log") + ".samples.txt");
     }
+    hang::set_thread(hang::kGpu, "pushbuffer");
     for (;;) {
         std::pair<Channel*, Submission> item;
         {
             std::unique_lock<std::mutex> l(g_q.m);
             perf::WaitScope ws(perf::kWaitGpuQueue);
             if (g_q.queue.empty()) host::timeline("gpu idle");
+            hang::Where hw("waiting for a submission");
             g_q.cv.wait(l, [] { return !g_q.queue.empty(); });
             item = std::move(g_q.queue.front());
             g_q.queue.pop_front();
@@ -1048,6 +1136,27 @@ static void gpu_thread() {
         perf::sample_core();
         execute(item.first, item.second);
     }
+}
+
+void dump_hang_state() {
+    const u64 now = host::ticks_ms();
+    long long queued = -1;
+    if (g_q.m.try_lock()) {
+        queued = (long long)g_q.queue.size();
+        g_q.m.unlock();
+    }
+    Channel* ch = g_cur_ch.load(std::memory_order_relaxed);
+    hw_log("hang: gpu thread: %llu submissions started, %llu finished, %lld queued (-1: queue locked); current sp%u entry %u/%u, "
+           "+%u increments, started %llu ms ago; pushbuffer method 0x%x subch %u, %u words pending; syncpoints 1=%u 2=%u",
+           (unsigned long long)g_exec_count, (unsigned long long)g_done_count.load(), queued, ch ? ch->syncpt : 0,
+           g_cur_entry.load(), g_cur_entries.load(), g_cur_inc.load(), (unsigned long long)(now - g_cur_t0.load()),
+           ch ? ch->pb.method : 0, ch ? ch->pb.subch : 0, ch ? ch->pb.count : 0, nv::syncpoint_read(1), nv::syncpoint_read(2));
+    for (int t = 0; t < hang::kThreads; t++) {
+        const char* w = hang::g_where[t].load(std::memory_order_relaxed);
+        hw_log("hang:   %-9s thread: %s (0x%llx)", hang::kThreadNames[t], w ? w : "not started",
+               (unsigned long long)hang::g_arg[t].load(std::memory_order_relaxed));
+    }
+    renderer()->dump_hang_state();
 }
 
 Channel* create_channel(MemoryManager* mm) {
@@ -1068,28 +1177,9 @@ Channel* create_channel(MemoryManager* mm) {
 // of letting its fences lag by seconds (its sync waits time out and it dereferences failed allocations).
 constexpr size_t kMaxQueuedSubmissions = 24;
 
+// Pushbuffers are read when the GPU thread executes an entry, not at submit: an entry may point at memory the GPU
+// writes before reaching it (NVN's indirect draw arguments, filled by a compute shader earlier in the stream).
 void channel_submit(Channel* ch, Submission&& s) {
-    // Snapshot the pushbuffers now (see Submission::snapshot). Entries flagged no_prefetch stay live.
-    static const bool live = getenv("HWDER_GPFIFO_LIVE") != nullptr;  // old behaviour, for A/B tests
-    if (!live) {
-        size_t total = 0;
-        for (const GpEntry& e : s.entries)
-            if (!e.no_prefetch()) total += e.words();
-        s.snapshot.resize(total);
-        s.snap_off.assign(s.entries.size(), ~0u);
-        u32 at = 0;
-        for (size_t i = 0; i < s.entries.size(); i++) {
-            const GpEntry& e = s.entries[i];
-            u32 n = e.words();
-            if (!n || e.no_prefetch()) continue;
-            const u64 va = e.address(), bytes = (u64)n * 4;
-            const void* src = ch->mm->translate(va);
-            if (src && ch->mm->contiguous_size(va, bytes) >= bytes) memcpy(s.snapshot.data() + at, src, bytes);
-            else ch->mm->read(va, s.snapshot.data() + at, bytes);
-            s.snap_off[i] = at;
-            at += n;
-        }
-    }
     {
         std::unique_lock<std::mutex> l(g_q.m);
         if (g_q.queue.size() >= kMaxQueuedSubmissions) {

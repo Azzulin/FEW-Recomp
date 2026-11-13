@@ -2,6 +2,7 @@
 // that runs deferred work, the staging ring, and the graveyard for resources the presenter may still read.
 // Moved text-for-text from vk_renderer.cpp.
 #include "vk_renderer.h"
+#include "gpu/hang_state.h"
 #include "host/timing.h"
 #include "host/platform.h"
 
@@ -151,6 +152,7 @@ Frame* new_frame() {
     {
         std::unique_lock<std::mutex> l(g_s.m);
         // bound the number of frames in flight
+        hang::Where hw("vk: all command buffers in flight");
         while (g_s.free_frames.empty() && g_s.in_flight.size() >= kMaxFramesInFlight) g_s.cv.wait(l);
         if (!g_s.free_frames.empty()) {
             f = g_s.free_frames.back();
@@ -209,6 +211,7 @@ void queue_submit(Frame* f) {
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &g_s.timeline;
     SlowTimer timer("vkQueueSubmit", 30.0);
+    hang::Where hw("vkQueueSubmit (queue lock)", serial);
     std::lock_guard<std::mutex> q(display::device().queue_lock);
     host::Counter t0, t1;
     host::counter(&t0);
@@ -256,14 +259,17 @@ void run_chunk(CmdChunk* c) {
 
 void record_thread() {
     host::name_thread(L"HWDER vk record");
+    hang::set_thread(hang::kRecord, "recording");
     for (;;) {
         CmdChunk* c;
         {
             std::unique_lock<std::mutex> l(g_rq.m);
+            hang::Where hw("waiting for a command chunk");
             g_rq.cv.wait(l, [] { return !g_rq.chunks.empty(); });
             c = g_rq.chunks.front();
             g_rq.chunks.pop_front();
         }
+        hang::Where hw("recording a command chunk", c->frame ? c->frame->serial : 0);
         run_chunk(c);
         {
             std::lock_guard<std::mutex> l(g_rq.m);
@@ -280,6 +286,7 @@ CmdChunk* get_chunk(Frame* f) {
     {
         std::unique_lock<std::mutex> l(g_rq.m);
         if (g_rq.free.empty() && g_rq.total >= kMaxChunks) {
+            hang::Where hw("vk: all command chunks queued for recording");
             g_rq.free_cv.wait(l, [] { return !g_rq.free.empty(); });
         }
         if (!g_rq.free.empty()) {
@@ -350,6 +357,7 @@ void* Recorder::alloc_cmd(size_t size, Exec exec) {
 void wait_serial(u64 serial) {
     if (g_s.completed >= serial) return;
     SlowTimer timer("wait_serial", 30.0);
+    hang::Where hw("vk: waiting for the GPU to reach serial", serial);
     VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &g_s.timeline;
@@ -366,10 +374,12 @@ void wait_serial(u64 serial) {
 
 void waiter_thread() {
     host::name_thread(L"HWDER vk waiter");
+    hang::set_thread(hang::kWaiter, "retiring");
     for (;;) {
         Frame* f = nullptr;
         {
             std::unique_lock<std::mutex> l(g_s.m);
+            hang::Where hw("waiting for work in flight");
             g_s.cv.wait(l, [] { return !g_s.in_flight.empty(); });
             f = g_s.in_flight.front();
         }
@@ -377,7 +387,10 @@ void waiter_thread() {
         gputime::frame_done(f);
         u64 v = 0;
         vkGetSemaphoreCounterValue(dev(), g_s.timeline, &v);
-        for (auto& fn : f->deferred) fn();
+        {
+            hang::Where hw("deferred work of serial", f->serial);
+            for (auto& fn : f->deferred) fn();
+        }
         f->deferred.clear();
         // Reset the finished frame's pools here rather than on the GPU thread when it is reused (~0.4 ms per
         // submission in big battles). The frame belongs to this thread until it is back in free_frames.
@@ -395,8 +408,45 @@ void waiter_thread() {
             }
         }
         g_s.cv.notify_all();
+        hang::Where hw("idle callbacks", run.size());
         for (auto& fn : run) fn();
     }
+}
+
+void sched_dump_hang_state(bool renderer_locked) {
+    u64 tl = 0;
+    const VkResult r = vkGetSemaphoreCounterValue(dev(), g_s.timeline, &tl);
+    long long queued = -1;
+    if (g_queued_m.try_lock()) {
+        queued = (long long)g_queued;
+        g_queued_m.unlock();
+    }
+    bool sched = false;
+    size_t in_flight = 0, idle = 0, free_frames = 0;
+    u64 in_flight_front = 0, idle_front = 0, flushed = 0;
+    if (g_s.m.try_lock()) {
+        sched = true;
+        in_flight = g_s.in_flight.size();
+        if (in_flight) in_flight_front = g_s.in_flight.front()->serial;
+        idle = g_s.idle.size();
+        if (idle) idle_front = g_s.idle.front().first;
+        free_frames = g_s.free_frames.size();
+        flushed = g_s.submitted;
+        g_s.m.unlock();
+    }
+    long long chunks = -1, chunks_total = -1;
+    if (g_rq.m.try_lock()) {
+        chunks = (long long)g_rq.chunks.size();
+        chunks_total = (long long)g_rq.total;
+        g_rq.m.unlock();
+    }
+    hw_log("hang: vk serials: next %llu, flushed %llu, submitted to the queue %lld, timeline %llu (result %d), completed %llu; "
+           "%s", (unsigned long long)g_rec.serial(), (unsigned long long)flushed, queued, (unsigned long long)tl, (int)r,
+           (unsigned long long)g_s.completed.load(), sched ? "" : "scheduler lock held");
+    hw_log("hang: vk queues: %zu in flight (front %llu), %zu idle callbacks (front %llu), %zu free frames; %lld chunks to record "
+           "(%lld allocated); current command buffer %s; renderer lock %s", in_flight, (unsigned long long)in_flight_front, idle,
+           (unsigned long long)idle_front, free_frames, chunks, chunks_total, g_s.cur ? "open" : "none",
+           renderer_locked ? "held" : "free");
 }
 
 Recorder& rec() { return g_rec; }

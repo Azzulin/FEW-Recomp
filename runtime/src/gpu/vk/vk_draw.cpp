@@ -1246,6 +1246,25 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
         compute_[key] = cp;
         shader::Options opt;
         cp->sh = get_shader(env, shader::Stage::Compute, opt, nullptr);
+        if (debug::flag(debug::DumpShaders)) {  // next to the listing: the launch descriptor and the constant buffers
+            char name[128];
+            snprintf(name, sizeof(name), "shader_%016llx_6.cbufs.txt", (unsigned long long)cp->sh->key);
+            if (FILE* f = fopen(name, "w")) {
+                fprintf(f, "qmd 0x%llx:", (unsigned long long)qmd_va);
+                for (u32 i = 0; i < 64; i++) fprintf(f, "%s%08x", i % 8 ? " " : "\n  ", q[i]);
+                fprintf(f, "\ngrid %u %u %u, local %u %u %u, smem %u\n", q[12] & 0x7FFFFFFF, q[13] & 0xFFFF, q[13] >> 16,
+                        env.lsize[0], env.lsize[1], env.lsize[2], env.smem);
+                for (u32 i = 0; i < 8; i++) {
+                    if (!cb_va[i]) continue;
+                    fprintf(f, "c%u at 0x%llx, %u bytes:", i, (unsigned long long)cb_va[i], cb_size[i]);
+                    const u32 words = std::min<u32>(cb_size[i], i == 0 ? 0x1000 : 0x200) / 4;
+                    for (u32 w = 0; w < words; w++)
+                        fprintf(f, "%s%08x", w % 8 ? " " : (fprintf(f, "\n  %04x:", w * 4), " "), read_u32(cb_va[i] + w * 4));
+                    fprintf(f, "\n");
+                }
+                fclose(f);
+            }
+        }
         if (cp->sh->ok) {
             cp->layout = stage_layout(cp->sh->prog.resources, VK_SHADER_STAGE_COMPUTE_BIT);
             VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};

@@ -83,6 +83,8 @@ public:
     virtual void on_gpu_idle(std::function<void()> fn) = 0;
     virtual void flush_commands() = 0;  // submit recorded work (end of GPFIFO entry batch)
     virtual void wait_idle() = 0;
+    // Post-mortem of a stuck frame (gpu::dump_hang_state): log serials, queues and locks. Any thread; never blocks.
+    virtual void dump_hang_state() {}
 
     // Composite a display surface and present it (called by vi on QueueBuffer).
     virtual void present(const FramebufferInfo& fb) = 0;
