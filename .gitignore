@@ -19,6 +19,7 @@ generated/
 build/
 dist/
 /Jogar no PC/
+/Envio Deck/
 *.obj
 *.o
 *.pdb
@@ -55,6 +56,7 @@ __pycache__/
 *.bat
 *.ps1
 !/gerar-few.ps1
+!/gerar-deck.ps1
 !tools/setup_ui/install_private_python.ps1
 !tools/tests/test_private_python.ps1
 !tools/screenshot.ps1
