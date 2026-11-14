@@ -28,7 +28,7 @@
 param(
     [switch]$SoMontar,
     [switch]$SoDados,
-    [int]$Jobs = 6,
+    [int]$Jobs = 10,  # cada compilação do C gerado ocupa até ~0,7 GB; o WSL tem 10 GB
     [string]$Distro = 'archlinux',
     [string]$March = 'znver2',
     [string]$WslBuild = '/root/few/build-deck'
@@ -44,7 +44,14 @@ function WriteLF([string]$path, [string]$text) { [IO.File]::WriteAllText($path, 
 # 1. build no WSL
 if (-not $SoMontar -and -not $SoDados) {
     Write-Host "==> Build Linux no WSL ($Distro, -march=$March, $Jobs jobs)" -ForegroundColor Cyan
-    & wsl.exe -d $Distro --exec env "FEW_JOBS=$Jobs" "FEW_MARCH=$March" bash (WinToWsl (Join-Path $root 'tools\deck\build-deck-wsl.sh')) (WinToWsl $root)
+    # ~1,5 h: sem isto o Windows entra em espera com a tela apagada e o WSL para junto (2026-11-13).
+    Add-Type -Namespace Few -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
+    [void][Few.Power]::SetThreadExecutionState([uint32]2147483651)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    try {
+        & wsl.exe -d $Distro --exec env "FEW_JOBS=$Jobs" "FEW_MARCH=$March" bash (WinToWsl (Join-Path $root 'tools\deck\build-deck-wsl.sh')) (WinToWsl $root)
+    } finally {
+        [void][Few.Power]::SetThreadExecutionState([uint32]2147483648)
+    }
     if ($LASTEXITCODE) { Fail 'build no WSL falhou (veja a saída acima)' }
 }
 

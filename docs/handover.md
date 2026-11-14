@@ -168,7 +168,11 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   `/root/hwder/data/HWDER/toolchain/<id>` (Zig/Clang mirando glibc 2.35, CMake, Ninja), as dependências
   estáticas da release Linux oficial (`/root/hwder/release/HWDER-linux-x86_64-v0.3.5/linux-deps`: SDL3, FFmpeg,
   libcrypto) e `-DHW_MARCH=znver2` (o Zig passa `-target-cpu znver2`). Saída: `/root/few/build-deck/few`.
-  O C gerado leva ~1 h com 6 jobs (o WSL tem 10 GB; ~470 MB por compilação); depois, só o runtime recompila.
+  O C gerado leva ~1,5–2 h com 10 jobs (o Clang do Zig leva ~2x o tempo do Windows nos arquivos grandes; os 184
+  `rc_main_*` são 80% do trabalho; ~0,7 GB por compilação, o WSL tem 10 GB). Depois, só o runtime recompila. O
+  `-march=znver2` não pesa na compilação (8,8 s contra 9,3 s do genérico num arquivo de 1 MB). O script mantém o
+  Windows acordado durante o build: em espera, o WSL para junto. Primeiro build (2026-11-13): `few` de 675 MB,
+  exige só `libc`/`libm`/`ld-linux`, glibc máxima 2.35.
 - **Pasta** `Envio Deck\FireEmblemWarriors` (ignorada pelo git), sem caminho fixo: `few`, NSP base e as 5 DLCs e
   as chaves por hardlink (o jogo pega o `.nsp` de nome menor, que é o da base, e acha as DLCs na mesma pasta),
   `update\` (hardlinks de `data\update`; `update_path=update` no `.ini`), `hwder_settings.ini`, `few-steam.sh`,
@@ -179,8 +183,14 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   `DECK_HOST=deck@<ip>`). Só o que mudou, retoma arquivo cortado, confere SHA-256 nos dois lados, mantém o `.ini`
   do Deck (`ENVIAR_INI=1` sobrescreve). O Deck precisa estar acordado; o SteamOS nega `systemd-inhibit` por SSH.
 - **No Deck**: `/run/media/deck/<cartao>/Games/FireEmblemWarriors` (SD ext4, SteamOS
-  3.9.5, APU AMD Custom 0405). Atalho na Steam: no Modo Desktop, na pasta, `sh instalar-no-deck.sh` (fecha e
-  reabre a Steam). O write-watch no Linux usa `userfaultfd` + `PAGEMAP_SCAN` (kernel 6.7+, o SteamOS tem).
+  3.9.5, kernel 7.2, APU AMD Custom 0405, RADV). Atalho na Steam: no Modo Desktop, na pasta,
+  `sh instalar-no-deck.sh` (fecha e reabre a Steam). O write-watch no Linux usa `userfaultfd` + `PAGEMAP_SCAN`
+  (kernel 6.7+).
+- **Teste de abertura** pelo PC: `bash tools/deck/testar-no-deck.sh [segundos]` roda o `few` no Deck com a janela
+  oculta e sem som (`HWDER_OFFSCREEN`, `HWDER_MUTE`, `DISPLAY=:1`, o Xwayland dos jogos no Modo Jogo, que tem
+  `STEAM_MULTIPLE_XWAYLANDS=1`) e resume o `hwder.log`. Não roda se houver jogo aberto.
+- O Deck **suspende sozinho** em poucos minutos sem uso, e aí some da rede (nem ARP): peça ao dono para acordá-lo
+  antes de enviar ou testar.
 
 ## Pendências, por prioridade
 
