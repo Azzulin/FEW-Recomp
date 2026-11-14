@@ -51,7 +51,8 @@ bash tools/deck/enviar-para-deck.sh       # Git Bash: envia por SSH à pasta Gam
 
 Compila no WSL (archlinux) com o toolchain Linux do HWDER (glibc 2.35) e `-march=znver2`, monta
 `Envio Deck\FireEmblemWarriors` (jogo, NSPs e chaves por hardlink, update, ajustes) e envia. No Deck, uma vez:
-`sh instalar-no-deck.sh` na pasta do jogo cria o atalho na Steam. Detalhes em
+`sh instalar-no-deck.sh` na pasta do jogo cria o atalho na Steam. No Deck as partículas da GPU ficam desligadas
+(`HWDER_GMEM=0` no lançador): com elas a batalha cai para ~3,5 fps; sem elas roda a 30 fps. Detalhes em
 [docs/handover.md](docs/handover.md#steam-deck).
 
 ## Licença

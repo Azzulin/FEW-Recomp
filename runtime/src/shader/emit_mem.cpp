@@ -1,4 +1,6 @@
 // Memory, attribute, texture and warp instructions.
+#include <cstdlib>
+
 #include "shader/translator.h"
 #include "gpu/diag.h"
 
@@ -217,6 +219,14 @@ static u32 gmem_desc_base(Stage s) {
 }
 
 void Translator::scan_global_memory() {
+    // HWDER_GMEM=0: global memory reads 0 and writes are dropped, as before it was implemented. The GPU particles of
+    // the battles (~700 launches of three ~12k-instruction shaders per frame) then stay off: on the Steam Deck those
+    // shaders spill under RADV/ACO (~0.7 ms per one-workgroup launch) and a battle ran at ~3.5 fps.
+    static const bool off = [] {
+        const char* v = getenv("HWDER_GMEM");
+        return v && v[0] == '0';
+    }();
+    if (off) return;
     const u32 base = gmem_desc_base(stage);
     std::set<u32> slots, seen;
     for (const Block& blk : blocks)

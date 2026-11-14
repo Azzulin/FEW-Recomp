@@ -122,6 +122,13 @@ lock do renderer está preso. Linhas `hang: …` no log. Com o processo vivo, `l
   thread de espera copia de volta para a memória do guest. Antes de ler uma entrada do GPFIFO, a thread da GPU
   chama `sync_gpu_writes` e espera essa volta se a entrada cair numa faixa pendente (~3 vezes por quadro).
   `flush_region` faz o mesmo para leituras de DMA.
+- **Buffers device-local** (desde o build do Deck): a memória do guest entra por cópia no anel de staging
+  (`gmem_upload`, só quando o write-watch acusa escrita) e volta por uma cópia na GPU para um buffer host-cached,
+  gravada quando o command buffer é enviado (`gmem_record_copybacks`, gancho `g_before_submit_gmem`); a thread de
+  espera copia de lá para o guest. No PC os piores quadros da batalha caíram de ~300 para ~80 ms.
+- **Barreiras em torno de despachos** (`vk_sched.cpp dispatch_barrier_before/after`): finas (transferência →
+  compute antes; escrita de compute → leitores depois) em vez de duas barreiras completas por despacho.
+  `HWDER_DISPATCH_FULL_BARRIERS=1` volta às completas.
 
 ### Desempenho da batalha
 
@@ -191,34 +198,56 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   `STEAM_MULTIPLE_XWAYLANDS=1`) e resume o `hwder.log`. Não roda se houver jogo aberto.
 - O Deck **suspende sozinho** em poucos minutos sem uso, e aí some da rede (nem ARP): peça ao dono para acordá-lo
   antes de enviar ou testar.
+- **Medido no Deck (2026-11-13)**: abre em 4,5 s, menus e abertura a 60 fps cravados, update e DLCs carregados,
+  write-watch ativo, sem erro. **Batalha com as partículas da GPU: ~3,5 fps** (270 ms por quadro). O tempo de GPU
+  (`HWDER_GPU_TIMING=5`, cada despacho é um segmento `disp`) vai quase todo para três shaders de cálculo de ~12 mil
+  instruções e ~300–480 desvios (`shader_a49eaa020c32da6e`, `abbede64c0dec758`, `13be8c9400da3059`): ~0,7 ms por
+  despacho de **um grupo só**, ~700 despachos por quadro. Não é barreira (trocá-las por barreiras finas não mudou o
+  Deck) nem tipo de memória (buffers device-local também não). Causa provável: o laço+`switch` do tradutor com todos
+  os registradores do guest vivos estoura os registradores no compilador da AMD (ACO) e despeja em scratch; a NVIDIA
+  aguenta. Saída rápida: `HWDER_GMEM=0` (memória global como no-op: sem partículas da GPU, a validação dos draws
+  indiretos descarta os argumentos de lixo). Correção de verdade: pendência 1.
+- **Com `HWDER_GMEM=0` a batalha roda a 30 fps no Deck** (~33,5 ms por quadro, o que o jogo pede; thread da GPU
+  ~3,5 ms por quadro), com uma pausa única de ~2,5 s quando a primeira batalha começa (compilação dos shaders de
+  cálculo pelo ACO). Por isso o `few-steam.sh` do pacote exporta `HWDER_GMEM=0` (a menos que já venha definido) e o
+  `steam_shortcut.py` preserva esse lançador ao criar o atalho.
+- O atalho na Steam **não foi criado** remotamente (fecharia a Steam do dono): no Modo Desktop, na pasta do jogo,
+  `sh instalar-no-deck.sh`. Os testes deixaram `pipeline_cache.bin`/`pipeline_warmup.bin` aquecidos na pasta.
+- Envio só de alguns arquivos: `ARQUIVOS="few few-steam.sh" bash tools/deck/enviar-para-deck.sh` (sem conferir os
+  ~19 GB de NSPs).
 
 ## Pendências, por prioridade
 
-1. **Ritmo da batalha**: ~42 ms por quadro em média para 33 pedidos, e picos de ~300 ms. Pistas, em ordem:
+1. **Shaders de cálculo grandes no AMD (Steam Deck)**: reconstruir controle de fluxo estruturado no tradutor (hoje
+   todo programa com mais de um bloco vira laço+`switch` sobre os blocos, `translate.cpp run`), ou ao menos encurtar
+   a vida dos registradores do guest, para o ACO não despejar em scratch. Confirmar antes com estatísticas do
+   RADV (`RADV_DEBUG=shaderstats` ou `VK_KHR_pipeline_executable_properties`: VGPRs e scratch dos três shaders da
+   seção "Steam Deck"). Até lá, o Deck roda com `HWDER_GMEM=0` (sem partículas da GPU).
+2. **Ritmo da batalha no PC**: ~42 ms por quadro em média para 33 pedidos. Pistas, em ordem:
    (a) a fase `present` do perfil (~20 ms por quadro; o perfil soma a thread do `vi`, que apresenta, à da GPU):
    ver se é espera do apresentador;
    (b) as esperas por escrita de shader (`vk: waiting for shader writes …`, ~3 por quadro, cada uma esvazia a GPU):
    o caminho de vez é o do yuzu, desenhar o indireto na própria GPU (`vkCmdDrawIndirect` lendo o buffer onde o
    compute escreveu), mas a macro 25 desenha quads, que hoje viram índices na CPU; (c) compilação de pipeline
    síncrona (seção "Engasgos").
-2. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
+3. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
    gráficos (não conferida); `SUST` (escrita em imagem, no-op), `AL2P` + `IPA` indexado, `TEX` com AOFFI não
    constante. Todos logam uma vez com `[shader]`.
-3. **60 fps na batalha** (seção "Taxa de quadros").
-4. **Escala de resolução > 1x**: travada em 1x (`texture_cache.cpp res_scale_allowed`). Em 2x a composição cobre
+4. **60 fps na batalha** (seção "Taxa de quadros").
+5. **Escala de resolução > 1x**: travada em 1x (`texture_cache.cpp res_scale_allowed`). Em 2x a composição cobre
    só o quadrante superior esquerdo. Diagnóstico provável, não confirmado: passes (compute, ou fetches a partir de
    `gl_FragCoord`) que endereçam alvos escalados em texels do guest. O caminho é o do escalonador do Ryujinx:
    `gl_FragCoord` no espaço do guest e compute escalado. O `TLDS` já escala as coordenadas das texturas marcadas
    (`PushConstants::scaled_textures`). Confirmar primeiro com `HWDER_VK_FRAME_DUMP` em 2x
    (`HWDER_ALLOW_RES_SCALE=1`).
-5. **Ganchos do jogo** (`HW_GAME_HOOKS=OFF`): 120 fps, ultrawide e LOD do HWDE dependem de símbolos. Achar as
+6. **Ganchos do jogo** (`HW_GAME_HOOKS=OFF`): 120 fps, ultrawide e LOD do HWDE dependem de símbolos. Achar as
    funções equivalentes do KTGL no FEW (`tools/recomp/games/hwde/symbols.txt` como guia; `remap_symbols.py`
    compara corpos de função) e só então religar.
-6. **Nomes do save**: o jogo grava `system` em `save/0100F15003E64000/<usuário>/`; os do progresso ainda não foram
+7. **Nomes do save**: o jogo grava `system` em `save/0100F15003E64000/<usuário>/`; os do progresso ainda não foram
    vistos. Ajustar `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
-7. **Steam Deck**: medir a batalha no aparelho (o Zen 2 a 2,4–3,5 GHz é mais lento que o i5-11400H por núcleo; a
-   thread da GPU, 34 ms por quadro no PC, é o gargalo provável) e montar a medição como a do HWDER
-   (fora deste repositório).
+8. **Steam Deck: medição**: montar a medição como a do HWDER (fora deste repositório): fps, watts e TDP por partida.
+
+
 
 ## Armadilhas já encontradas
 

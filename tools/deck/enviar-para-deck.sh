@@ -8,6 +8,8 @@
 #            ENVIAR_INI=1  sobrescreve também o hwder_settings.ini do Deck (por padrão o de lá é mantido, com os
 #                          ajustes feitos no F1)
 #            SO_DADOS=1    envia sem o few (pasta montada com gerar-deck.ps1 -SoDados)
+#            ARQUIVOS="few hwder_settings.ini"  só estes (caminhos relativos à pasta): pula a conferência dos NSPs,
+#                          que leva minutos (SHA-256 de ~19 GB dos dois lados)
 # O Deck precisa estar ACORDADO e com o sshd ativo (no Deck: sudo systemctl enable --now sshd).
 set -euo pipefail
 HOST=${DECK_HOST:-deck@<ip-do-deck>}
@@ -31,7 +33,11 @@ echo "destino: $HOST:$DEST"
 ssh_deck -n "pgrep -x few >/dev/null && { echo 'ERRO: feche o jogo no Deck'; exit 3; }; mkdir -p $(q "$DEST")/save"
 
 cd "$SRC"
-mapfile -t files < <(find . -type f ! -path './save/*' ! -name '*.bak' | sed 's|^\./||' | sort)
+if [ -n "${ARQUIVOS:-}" ]; then
+    read -r -a files <<< "$ARQUIVOS"
+else
+    mapfile -t files < <(find . -type f ! -path './save/*' ! -name '*.bak' | sed 's|^\./||' | sort)
+fi
 for f in "${files[@]}"; do
     rf="$DEST/$f"
     ssh_deck -n "mkdir -p $(q "$(dirname "$rf")")"

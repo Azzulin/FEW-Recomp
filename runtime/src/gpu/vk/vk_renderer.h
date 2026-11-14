@@ -77,6 +77,7 @@ struct Sched {
 extern Sched g_s;
 // Called by Recorder::flush before it submits (the renderer finishes CPU-side writes into staging slices).
 extern void (*g_before_submit)();
+extern void (*g_before_submit_gmem)();  // the same, for storage buffer copy-backs (VkRenderer::gmem_record_copybacks)
 extern Recorder g_rec;
 
 void wait_serial(u64 serial);
@@ -92,6 +93,8 @@ void waiter_thread();
 // Post-mortem of a stuck frame: serials, queues and locks of the scheduler (gpu::dump_hang_state).
 void sched_dump_hang_state(bool renderer_locked);
 void full_barrier(VkCommandBuffer cb);
+void dispatch_barrier_before(VkCommandBuffer cb);  // around a compute dispatch (see vk_sched.cpp)
+void dispatch_barrier_after(VkCommandBuffer cb);
 void run_graveyard();  // present: destroy what the graveyard holds once the GPU and presenter are done with it
 
 }  // namespace gpu::vk
@@ -553,11 +556,15 @@ private:
     // memory lacks, `pending` is the serial of the command buffer that wrote them; when it completes the waiter thread
     // copies the buffer back to guest memory and clears it. Until then every bind uses the GPU copy, so dispatches
     // that pass data through memory (count, compact, write arguments) see each other's results.
+    // The buffer is device-local: shaders reading host memory through it ran ~0.7 ms per one-workgroup launch on the
+    // Steam Deck (RADV maps CPU-coherent memory uncached for the GPU). Guest data goes in by a staged copy, and back
+    // by a GPU copy into `readback` (host-cached) when the command buffer is submitted (gmem_record_copybacks).
     struct GmemBuf {
         u8* host = nullptr;
         u64 size = 0;         // bytes of the VkBuffer
         u64 guest_bytes = 0;  // bytes mirrored from and to guest memory
         Buffer buf{};
+        Buffer readback{};    // host-visible, host-cached copy target for the copy-back
         std::atomic<u64> pending{0};
         u64 last_use = 0;
         u64 copyback_serial = 0;  // serial whose completion already has a copy-back queued (one per command buffer)
@@ -566,7 +573,14 @@ private:
     };
     std::unordered_map<u8*, GmemBuf*> gmem_;
     std::atomic<u64> gmem_pending_max_{0};  // highest serial with GPU writes not yet copied back (fast check)
+    std::vector<GmemBuf*> gmem_copyback_;  // written in the command buffer being recorded: copied back at submit
     VkDescriptorBufferInfo gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written);
+    void gmem_upload(GmemBuf* gb, const u8* src, u64 bytes);
+
+public:
+    void gmem_record_copybacks();  // Recorder::flush, before the command buffer ends (g_before_submit_gmem)
+
+private:
     void gmem_sync(u64 addr, u64 size);  // m_ held: wait for pending GPU writes overlapping [addr, addr+size)
     bool draw_samples_rt_ = false;  // the draw being built samples a render target (post-process pass)
     // Fragment-stage textures (bit = index in the stage's Resources::textures, first 32) bound to a render target

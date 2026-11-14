@@ -315,7 +315,13 @@ def write_launcher(exe, container=""):
             "# Written by tools/steam_shortcut.py; Steam's \"" + STEAM_NAME + "\" entry starts this.\n"
             "cd \"$(dirname -- \"$0\")\" || exit 1\n"
             "exec " + run + " \"$@\"\n")
-    if not script.is_file() or script.read_text(encoding="utf-8", errors="replace") != text:
+    # A launcher that already runs this game from its folder is kept: the Steam Deck package's few-steam.sh sets the
+    # Deck's variables (gerar-deck.ps1) before the same exec line.
+    current = script.read_text(encoding="utf-8", errors="replace") if script.is_file() else ""
+    if not container and ("exec " + run) in current and "cd \"$(dirname -- \"$0\")\"" in current:
+        os.chmod(script, 0o755)
+        return script
+    if current != text:
         temporary = script.with_name("." + LAUNCHER + ".tmp")
         temporary.write_text(text, encoding="utf-8", newline="\n")
         os.chmod(temporary, 0o755)

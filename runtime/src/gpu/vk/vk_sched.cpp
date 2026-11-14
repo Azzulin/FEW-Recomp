@@ -10,6 +10,7 @@ namespace gpu::vk {
 
 Sched g_s;
 void (*g_before_submit)() = nullptr;
+void (*g_before_submit_gmem)() = nullptr;
 
 Recorder g_rec;
 
@@ -109,7 +110,8 @@ void frame_done(Frame* f) {
         for (size_t i = 0; i < v.size() && i < 30; i++) {
             const auto& [k, a] = v[i];
             hw_log("gpu-time:   %6.3f ms %5.1f/frame %6.1f draws %4.1f clears | %s %ux%u f%u d%u n%u prog %016llx", a.ns / pf,
-                   (double)a.segs / presents, (double)a.draws / presents, (double)a.clears / presents, k.kind == kPass ? "pass " : "other",
+                   (double)a.segs / presents, (double)a.draws / presents, (double)a.clears / presents,
+                   k.kind == kPass ? "pass " : k.kind == kDispatch ? "disp " : "other",
                    k.w, k.h, k.fmt, k.dfmt, k.ncol, (unsigned long long)k.prog);
         }
     }
@@ -478,6 +480,39 @@ void Recorder::cmd() {
     if (rendering) end_rendering();
 }
 
+// Around a compute dispatch. Full barriers there cost ~0.35 ms of GPU time each on RADV (the Steam Deck): they drain
+// the GPU and flush or invalidate every cache, and a battle frame has ~700 dispatches. What a dispatch needs instead:
+// before it, transfers recorded earlier (uploads it reads) are done; render passes already end with a full barrier
+// and every dispatch with the barrier below. After it, its writes reach whatever reads them next on the GPU (indirect
+// arguments, vertices, indices, shaders, copies). Host reads of its results come after the command buffer's final
+// full barrier (Recorder::flush). HWDER_DISPATCH_FULL_BARRIERS=1 puts the full barriers back (A/B tests).
+static bool dispatch_full_barriers() {
+    static const bool full = getenv("HWDER_DISPATCH_FULL_BARRIERS") != nullptr;
+    return full;
+}
+
+void dispatch_barrier_before(VkCommandBuffer cb) {
+    if (dispatch_full_barriers()) return full_barrier(cb);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, nullptr,
+                         0, nullptr);
+}
+
+void dispatch_barrier_after(VkCommandBuffer cb) {
+    if (dispatch_full_barriers()) return full_barrier(cb);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+                       VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                       VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    const VkPipelineStageFlags dst = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+                                     VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst, 0, 1, &mb, 0, nullptr, 0, nullptr);
+}
+
 void full_barrier(VkCommandBuffer cb) {
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -545,6 +580,7 @@ Slice Recorder::stage(u64 size, u64 align) {
 void Recorder::flush() {
     if (!g_s.cur) return;
     if (g_before_submit) g_before_submit();
+    if (g_before_submit_gmem) g_before_submit_gmem();
     end_rendering();
     record([](VkCommandBuffer cb) { full_barrier(cb); });
     gputime::frame_end(g_s.cur);

@@ -1305,13 +1305,17 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
     const VkPipeline pipe = cp->pipe;
     const VkPipelineLayout pl = cp->pl;
     const u32 gx = std::max(1u, q[12] & 0x7FFFFFFF), gy = std::max(1u, q[13] & 0xFFFF), gz = std::max(1u, q[13] >> 16);
+    // HWDER_GPU_TIMING: each launch is a segment of its own, grouped by program and grid.
+    gputime::mark(gputime::kDispatch, gx, gy, gz);
+    gputime::count_draw(key);
     g_rec.record([pipe, pl, set, gx, gy, gz](VkCommandBuffer cb) {
-        full_barrier(cb);
+        dispatch_barrier_before(cb);
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
         if (set) vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &set, 0, nullptr);
         vkCmdDispatch(cb, gx, gy, gz);
-        full_barrier(cb);
+        dispatch_barrier_after(cb);
     });
+    gputime::mark(gputime::kOther);
     for (auto& f : post) f();
 }
 

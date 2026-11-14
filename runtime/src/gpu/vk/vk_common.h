@@ -125,7 +125,7 @@ extern float g_res_scale, g_res_scale_y;  // internal resolution scale (x, y) fo
 
 // ------------------------------------------------------------------ GPU timing (HWDER_GPU_TIMING, vk_sched.cpp)
 namespace gputime {
-enum Kind : u32 { kOther, kPass };
+enum Kind : u32 { kOther, kPass, kDispatch };  // kDispatch: one compute launch (w h fmt = grid, prog = program key)
 struct Seg {
     u32 kind = kOther, w = 0, h = 0, fmt = 0, dfmt = 0, ncol = 0;
     u64 prog = 0;  // fragment shader of the first draw

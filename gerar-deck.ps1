@@ -105,7 +105,10 @@ show_fps=1
 WriteLF "$out\few-steam.sh" @'
 #!/bin/sh
 # Lançador do atalho "Fire Emblem Warriors" na Steam (escrito por gerar-deck.ps1).
+# HWDER_GMEM=0: sem as partículas da GPU nas batalhas. Com elas (HWDER_GMEM=1) a batalha cai para ~3,5 fps no Deck:
+# três shaders de partículas muito grandes rodam mal no compilador da AMD (pendência no docs/handover.md).
 cd "$(dirname -- "$0")" || exit 1
+export HWDER_GMEM="${HWDER_GMEM:-0}"
 exec ./few "$@"
 '@
 
@@ -150,6 +153,9 @@ O jogo aparece na biblioteca da Steam, aba Não Steam: "Fire Emblem Warriors".
 
 - Compilado para o processador do Deck (Zen 2, -march=znver2): não roda em CPUs sem as mesmas instruções.
 - A batalha roda a 30 fps por escolha do próprio jogo. Não force 30 fps na Steam nos menus (60 fps).
+- As partículas da GPU (poeira, riscos de velocidade) ficam desligadas no Deck (HWDER_GMEM=0 no few-steam.sh):
+  com elas a batalha cai para ~3,5 fps. O resto do jogo é o mesmo do PC.
+- A primeira batalha de cada sessão pode parar ~2 s no começo compilando os shaders de cálculo.
 - Os primeiros minutos engasgam compilando shaders; os caches (pipeline_cache.bin, pipeline_warmup.bin) ficam
   aqui e o engasgo diminui com o uso.
 - F1 (ou segurar View) abre o menu do runtime. Log: hwder.log nesta pasta.

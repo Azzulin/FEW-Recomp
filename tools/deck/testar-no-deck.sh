@@ -7,6 +7,9 @@
 # Uso:  bash tools/deck/testar-no-deck.sh [segundos=90] [pasta no Deck]
 # Variáveis: DECK_HOST (padrão deck@<ip-do-deck>), DECK_KEY (padrão ~/.ssh/<chave-do-deck>),
 #            DECK_DISPLAY (padrão :1, o Xwayland dos jogos no Modo Jogo; no Modo Desktop use :0)
+#            DECK_INPUT=tools/input/battle_long.txt  roteiro de entrada (HWDER_INPUT_SCRIPT), copiado para o Deck
+#            DECK_FRESH=1  começa com save vazio: o save do Deck é guardado antes e volta no fim (o do teste some)
+#            DECK_ENV="HWDER_THREAD_STATS=1 ..."  variáveis extras para o jogo
 set -euo pipefail
 HOST=${DECK_HOST:-deck@<ip-do-deck>}
 KEY=${DECK_KEY:-$HOME/.ssh/<chave-do-deck>}
@@ -15,23 +18,40 @@ ssh_deck() { ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveI
 DEST=${2:-$(ssh_deck -n 'for d in /run/media/deck/*/; do [ -d "$d/Games/FireEmblemWarriors" ] && { echo "${d%/}/Games/FireEmblemWarriors"; break; }; done')}
 [ -n "$DEST" ] || { echo "ERRO: pasta FireEmblemWarriors não encontrada no Deck"; exit 1; }
 
-ssh_deck bash -s -- "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" <<'EOF'
+INPUT_REMOTE=""
+if [ -n "${DECK_INPUT:-}" ]; then
+    INPUT_REMOTE=/tmp/few-input.txt
+    ssh_deck "cat > $INPUT_REMOTE" < "$DECK_INPUT"
+fi
+
+ssh_deck bash -s -- "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" "$INPUT_REMOTE" "${DECK_FRESH:-}" "${DECK_ENV:-}" <<'EOF'
 set -u
-DEST=$1 SECS=$2 DISP=$3
+DEST=$1 SECS=$2 DISP=$3 INPUT=$4 FRESH=$5 EXTRA=$6
 cd "$DEST" || exit 1
 if pgrep -af 'reaper.*SteamLaunch|SteamLaunch' >/dev/null || pgrep -x few >/dev/null; then
     echo "ERRO: há um jogo aberto no Deck; teste cancelado"; exit 2
 fi
 [ -x few ] || chmod +x few
-echo "== $(sha256sum few | cut -c1-16)…  few, teste de $SECS s em DISPLAY=$DISP"
+echo "== $(sha256sum few | cut -c1-16)…  few, teste de $SECS s em DISPLAY=$DISP${INPUT:+, roteiro $INPUT}${FRESH:+, save vazio}"
 export DISPLAY=$DISP XDG_RUNTIME_DIR=/run/user/$(id -u) HWDER_OFFSCREEN=1 HWDER_MUTE=1 HWDER_NO_PRELAUNCH=1
+[ -n "$INPUT" ] && export HWDER_INPUT_SCRIPT=$INPUT
+for kv in $EXTRA; do export "$kv"; done
+kept=""
+if [ -n "$FRESH" ] && [ -d save ]; then
+    kept="save.antes-do-teste-$(date +%Y%m%d-%H%M%S)"
+    mv save "$kept"
+fi
 start=$(date +%s)
 timeout -s INT "$SECS" ./few >/tmp/few-stdout.txt 2>&1
 code=$?
 pkill -x few 2>/dev/null
+if [ -n "$FRESH" ]; then  # the test's save goes; the one from before comes back
+    rm -rf save
+    if [ -n "$kept" ]; then mv "$kept" save; else mkdir -p save; fi
+fi
 echo "== saiu com $code após $(( $(date +%s) - start )) s (124 = encerrado pelo teste)"
 echo "== stdout/stderr (fim)"; tail -n 8 /tmp/few-stdout.txt
 echo "== log"
-grep -E 'vulkan: |nsp: (program|update|version)|aoc:|vi: first frame|display: 300 frames|fatal|error|unimplemented instruction|\[shader\]|mem: no write watch|write watch' hwder.log | head -40
+grep -E 'vulkan: |nsp: (program|update|version)|aoc:|vi: first frame|display: 300 frames|fatal|error|unimplemented instruction|\[shader\]|mem: no write watch|write watch|frame fence|hang: gpu|gpu thread busy|per frame: [0-9.]+ dispatches' hwder.log | head -80
 echo "== últimas linhas"; tail -n 6 hwder.log
 EOF
