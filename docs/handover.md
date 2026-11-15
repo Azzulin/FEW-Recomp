@@ -315,8 +315,10 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   ~3,5 ms por quadro), com uma pausa única de ~2,5 s quando a primeira batalha começa (compilação dos shaders de
   cálculo pelo ACO). Por isso o `few-steam.sh` do pacote exporta `HWDER_GMEM=0` (a menos que já venha definido) e o
   `steam_shortcut.py` preserva esse lançador ao criar o atalho.
-- O atalho na Steam **não foi criado** remotamente (fecharia a Steam do dono): no Modo Desktop, na pasta do jogo,
-  `sh instalar-no-deck.sh`. Os testes deixaram `pipeline_cache.bin`/`pipeline_warmup.bin` aquecidos na pasta.
+- O atalho na Steam **foi criado** em 2026-11-15 pelo SSH, com o Deck no Modo Jogo e nenhum jogo aberto:
+  `sh instalar-no-deck.sh --yes` na pasta do jogo (fecha a Steam; a sessão do Modo Jogo a reabre sozinha; capa
+  baixada). Na biblioteca há outra entrada "Fire Emblem Warriors", a da versão de 3DS pelo Azahar (EmuDeck): a do
+  recomp aponta para `few-steam.sh`. Os testes deixaram `pipeline_cache.bin`/`pipeline_warmup.bin` aquecidos na pasta.
 - Envio só de alguns arquivos: `ARQUIVOS="few few-steam.sh" bash tools/deck/enviar-para-deck.sh` (sem conferir os
   ~19 GB de NSPs).
 
