@@ -80,7 +80,7 @@ void Translator::emit_mem(Inst in, Op op) {
             return b.load(t_u32, b.op(spv::OpAccessChain, b.t_ptr(spv::StorageClassInput, t_u32), {var, u(comp)}));
         };
         switch (sr) {
-        case 0: v = lane_id(); break;
+        case 0: v = warp_lane(); break;  // SR_LANEID
         case 18: v = u(0x3F800000); break;  // Y direction: +1.0
         case 29: v = u(0x00FF0000); break;
         case 32:
@@ -102,7 +102,7 @@ void Translator::emit_mem(Inst in, Op op) {
         case 56: case 57: case 58: case 59: case 60: {
             // SR_EQMASK, LTMASK, LEMASK, GTMASK, GEMASK: lanes of the 32-wide warp relative to this one. Warp-aggregated
             // atomics (one lane adds the vote's popcount, each lane takes popc(vote & LTMASK) as its slot) need them.
-            Id bit = op2(spv::OpShiftLeftLogical, t_u32, u(1), lane_id());
+            Id bit = op2(spv::OpShiftLeftLogical, t_u32, u(1), warp_lane());
             Id lt = op2(spv::OpISub, t_u32, bit, u(1));
             Id le = op2(spv::OpBitwiseOr, t_u32, lt, bit);
             v = sr == 56 ? bit : sr == 57 ? lt : sr == 58 ? le : sr == 59 ? b.op(spv::OpNot, t_u32, {le}) : b.op(spv::OpNot, t_u32, {lt});
@@ -730,33 +730,55 @@ void Translator::emit_warp(Inst in, Op op) {
                 return;
             }
         }
+        // Within the 32-lane warp (warp_lane): c = (segment mask << 8) | clamp, as in PTX shfl. A source lane outside
+        // [min_lane, max_lane] leaves the value unchanged and clears the predicate.
         b.capability(spv::CapabilityGroupNonUniformShuffle);
         Id index = idx_imm ? u(idx_v) : R(in.bits(20, 8));
-        Id lane = lane_id();
-        Id id;
+        const u32 seg = mask_imm ? (mask_v >> 8) & 31 : 0, clamp = mask_imm ? mask_v & 31 : 31;
+        Id lane = warp_lane();
+        Id min_lane = op2(spv::OpBitwiseAnd, t_u32, lane, u(seg));
+        Id max_lane = op2(spv::OpBitwiseOr, t_u32, min_lane, u(clamp & ~seg));
+        Id j, valid;
         switch (mode) {
-        case 0: id = index; break;
-        case 1: id = op2(spv::OpISub, t_u32, lane, index); break;
-        case 2: id = iadd(lane, index); break;
-        default: id = op2(spv::OpBitwiseXor, t_u32, lane, index); break;
+        case 0:  // IDX
+            j = op2(spv::OpBitwiseOr, t_u32, min_lane, op2(spv::OpBitwiseAnd, t_u32, index, u(~seg & 31)));
+            valid = op2(spv::OpULessThanEqual, t_bool, j, max_lane);
+            break;
+        case 1:  // UP
+            j = op2(spv::OpISub, t_u32, lane, index);
+            valid = op2(spv::OpSGreaterThanEqual, t_bool, j, min_lane);
+            break;
+        case 2:  // DOWN
+            j = iadd(lane, index);
+            valid = op2(spv::OpULessThanEqual, t_bool, j, max_lane);
+            break;
+        default:  // BFLY
+            j = op2(spv::OpBitwiseXor, t_u32, lane, index);
+            valid = op2(spv::OpULessThanEqual, t_bool, j, max_lane);
+            break;
         }
-        (void)mask_imm;
-        setR(d, b.op(spv::OpGroupNonUniformShuffle, t_u32, {scope, val, id}));
-        set_pred(in.bits(48, 3), b.c_bool(true));
+        Id src = op2(spv::OpBitwiseOr, t_u32, op2(spv::OpBitwiseAnd, t_u32, lane_id(), u(~31u)),
+                     op2(spv::OpBitwiseAnd, t_u32, j, u(31)));
+        Id got = b.op(spv::OpGroupNonUniformShuffle, t_u32, {scope, val, src});
+        setR(d, b.op(spv::OpSelect, t_u32, {valid, got, val}));
+        set_pred(in.bits(48, 3), valid);
         return;
     }
     case Op::VOTE: {
         b.capability(spv::CapabilityGroupNonUniformVote);
         b.capability(spv::CapabilityGroupNonUniformBallot);
+        // Over this lane's 32-lane warp (warp_ballot), not the whole host subgroup.
         Id p = pred(in.bits(39, 3), in.bit(42));
-        Id scope = u(spv::ScopeSubgroup);
         u32 vop = in.bits(48, 2);
-        Id r = vop == 0 ? b.op(spv::OpGroupNonUniformAll, t_bool, {scope, p})
-             : vop == 1 ? b.op(spv::OpGroupNonUniformAny, t_bool, {scope, p})
-                        : b.op(spv::OpGroupNonUniformAllEqual, t_bool, {scope, p});
+        Id mine = warp_ballot(p);
+        Id active = warp_ballot(b.c_bool(true));
+        Id all = op2(spv::OpIEqual, t_bool, mine, active);
+        Id none = op2(spv::OpIEqual, t_bool, mine, u(0));
+        Id r = vop == 0 ? all
+             : vop == 1 ? b.op(spv::OpLogicalNot, t_bool, {none})
+                        : op2(spv::OpLogicalOr, t_bool, all, none);
         set_pred(in.bits(45, 3), r);
-        Id ballot = b.op(spv::OpGroupNonUniformBallot, t_v4u, {scope, p});
-        setR(d, b.op(spv::OpCompositeExtract, t_u32, {ballot, 0}));
+        setR(d, mine);
         return;
     }
     default:

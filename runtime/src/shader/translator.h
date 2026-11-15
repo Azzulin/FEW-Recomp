@@ -186,7 +186,9 @@ public:
     Id load_attribute(u32 addr);           // vertex/fragment input attribute word (u32 bits)
     void store_attribute(u32 addr, Id v);  // output attribute word
     Id ipa(Inst in);
-    Id lane_id();
+    Id lane_id();    // index in the host subgroup (32 on NVIDIA, 64 on AMD's wave64)
+    Id warp_lane();  // index in the guest's 32-thread warp: lane_id() & 31
+    Id warp_ballot(Id p);  // the 32-bit vote of this lane's warp (its half of a 64-wide subgroup)
 
     // local / shared memory
     Id local_mem = 0, shared_mem = 0;

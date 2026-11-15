@@ -181,6 +181,20 @@ Id Translator::lane_id() {
     return b.load(t_u32, subgroup_id);
 }
 
+// Maxwell code is written for 32-thread warps; AMD runs it in 64-wide subgroups (wave64), each holding two guest
+// warps. Lane ids, lane masks, votes and shuffles are therefore taken within this lane's 32-lane half. Without it the
+// second half of a wave read wrong masks and lost its votes, and NVN's warp-aggregated atomics (one lane adds the
+// vote's popcount, each lane takes popc(vote & LTMASK)) built wrong lists: on the Steam Deck the per-tile light lists
+// of the battle's deferred lighting came out long enough to make one full-screen draw 14x slower than on a desktop.
+Id Translator::warp_lane() { return op2(spv::OpBitwiseAnd, t_u32, lane_id(), u(31)); }
+
+Id Translator::warp_ballot(Id p) {
+    b.capability(spv::CapabilityGroupNonUniformBallot);
+    Id ballot = b.op(spv::OpGroupNonUniformBallot, t_v4u, {u(spv::ScopeSubgroup), p});
+    Id half = op2(spv::OpShiftRightLogical, t_u32, lane_id(), u(5));
+    return b.op(spv::OpVectorExtractDynamic, t_u32, {ballot, half});
+}
+
 static Id component_ptr(SpvBuilder& b, spv::StorageClass sc, Id elem_t, Id var, Id idx) {
     return b.op(spv::OpAccessChain, b.t_ptr(sc, elem_t), {var, idx});
 }
