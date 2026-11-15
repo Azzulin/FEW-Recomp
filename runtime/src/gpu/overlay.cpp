@@ -627,6 +627,10 @@ static void tab_graphics(bool& changed) {
     if (ImGui::Checkbox("1080p at 60 fps", &v.full_res_60)) changed = true;
     help("With 60 fps battles: render the 3D at the Quality mode's 1920x1080 instead of the Performance mode's\n"
          "1280x720. Needs a strong GPU to hold 60 fps in big fights. Takes effect at launch.");
+    if (ImGui::Checkbox("720p at 30 fps", &v.low_res_30)) changed = true;
+    help("Without 60 fps battles: render the 3D at the Performance mode's 1280x720 instead of 1920x1080. For\n"
+         "small screens and weaker GPUs (on by default on the Steam Deck, whose screen is 1280x800).\n"
+         "Takes effect at launch.");
 
     section("Shaders");
     settings::Debug& d = settings::debug();

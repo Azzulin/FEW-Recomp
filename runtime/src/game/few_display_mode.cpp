@@ -17,7 +17,9 @@
 // choosing Performance in the game's options does. The game resets mode 1 to 0 by itself while the byte at
 // sys+0xa6b2 is set (real-time cutscenes, at 30 Hz); the hook leaves those calls alone.
 // Display_SetMode also stores a configuration id at sys+0x44 (mode 0: 0, 1: 3, 2: 5, 3: 7, 4: 8, 5: 9) that picks the
-// 3D render size; with fps60_1080p the hook gives Performance mode the Quality id (1920x1080 instead of 1280x720).
+// 3D render size; with fps60_1080p the hook gives Performance mode the Quality id (1920x1080 instead of 1280x720),
+// and with fps30_720p (the Steam Deck's default) it gives Quality mode the Performance id: 30 fps at 1280x720, the
+// height of the Deck's screen, with everything else as in Quality mode (effects, character draw distance).
 #include "game/guest.h"
 #include "game/hook.h"
 #include "gpu/settings.h"
@@ -43,6 +45,8 @@ HW_HOOK(Display_SetMode) {
     // 1920x1080. The configuration id only picks render target sizes (DynRes_Update and its tables), so 60 Hz keeps
     // the Quality picture with it.
     if (to != mode && settings::video().full_res_60) game::write<u32>(sys + 0x44, mode == 0 ? 0u : 7u);
+    if (to == mode && (mode == 0 || mode == 3) && settings::video().low_res_30)
+        game::write<u32>(sys + 0x44, mode == 0 ? 3u : 8u);
 }
 
 // The dynamic resolution controller steps the configuration id within its mode's group (0-2, 3-4, 5-6; 7-9 fixed) from

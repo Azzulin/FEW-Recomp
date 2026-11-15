@@ -122,6 +122,7 @@ void load() {
         else if (k == "keep_crowd_props") g_video.keep_crowd_props = atoi(v) != 0;
         else if (k == "fps60") g_video.battle_60fps = atoi(v) != 0;
         else if (k == "fps60_1080p") g_video.full_res_60 = atoi(v) != 0;
+        else if (k == "fps30_720p") g_video.low_res_30 = atoi(v) != 0;
         else if (k == "async_shaders") g_debug.async_shaders = atoi(v) != 0;
         else if (k == "debug_env") {
             // Comma-separated HWDER_* names; anything else is ignored.
@@ -186,7 +187,8 @@ void save() {
     fprintf(f, "contrast=%d\nbloom=%d\nfov=%d\nfxaa=%d\nsharpen=%d\nfps120=%d\nkeep_crowd_props=%d\n", g_video.contrast, g_video.bloom,
             g_video.fov, (int)g_video.fxaa, g_video.sharpen, (int)g_video.fps120.load(std::memory_order_relaxed),
             (int)g_video.keep_crowd_props);
-    fprintf(f, "fps60=%d\nfps60_1080p=%d\n", (int)g_video.battle_60fps, (int)g_video.full_res_60);
+    fprintf(f, "fps60=%d\nfps60_1080p=%d\nfps30_720p=%d\n", (int)g_video.battle_60fps, (int)g_video.full_res_60,
+            (int)g_video.low_res_30);
     fprintf(f, "rumble_strength=%d\nface_labels=%d\ndeadzone_l=%d\ndeadzone_r=%d\ninvert_lx=%d\ninvert_ly=%d\ninvert_rx=%d\ninvert_ry=%d\n"
                "motion=%d\n",
             g_input.rumble_strength, (int)g_input.face_labels, g_input.deadzone_l, g_input.deadzone_r, (int)g_input.invert_lx,
