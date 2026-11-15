@@ -10,6 +10,11 @@
 #            DECK_INPUT=tools/input/battle_long.txt  roteiro de entrada (HWDER_INPUT_SCRIPT), copiado para o Deck
 #            DECK_FRESH=1  começa com save vazio: o save do Deck é guardado antes e volta no fim (o do teste some)
 #            DECK_ENV="HWDER_THREAD_STATS=1 ..."  variáveis extras para o jogo
+#            DECK_PACE=1  liga HWDER_PACE_TRACE, traz as linhas "pace:" para build/deck_pace.log e resume o fps por
+#                         janela de 20 s com tools/pace_summary.py
+#
+# Batalha medida (save vazio até o prólogo e 5 min de luta, ~230 s):
+#   DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230
 set -euo pipefail
 HOST=${DECK_HOST:-deck@<ip-do-deck>}
 KEY=${DECK_KEY:-$HOME/.ssh/<chave-do-deck>}
@@ -24,7 +29,10 @@ if [ -n "${DECK_INPUT:-}" ]; then
     ssh_deck "cat > $INPUT_REMOTE" < "$DECK_INPUT"
 fi
 
-ssh_deck bash -s -- "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" "$INPUT_REMOTE" "${DECK_FRESH:-}" "${DECK_ENV:-}" <<'EOF'
+EXTRA_ENV=${DECK_ENV:-}
+[ -n "${DECK_PACE:-}" ] && EXTRA_ENV="$EXTRA_ENV HWDER_PACE_TRACE=1"
+
+ssh_deck bash -s -- "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" "$INPUT_REMOTE" "${DECK_FRESH:-}" "$EXTRA_ENV" <<'EOF'
 set -u
 DEST=$1 SECS=$2 DISP=$3 INPUT=$4 FRESH=$5 EXTRA=$6
 cd "$DEST" || exit 1
@@ -32,6 +40,10 @@ if pgrep -af 'reaper.*SteamLaunch|SteamLaunch' >/dev/null || pgrep -x few >/dev/
     echo "ERRO: há um jogo aberto no Deck; teste cancelado"; exit 2
 fi
 [ -x few ] || chmod +x few
+# Como no few-steam.sh: um .ini de build antigo não tem fps60_1080p, e no Deck o padrão é 720p.
+if [ -f hwder_settings.ini ] && ! grep -q '^fps60_1080p=' hwder_settings.ini; then
+    printf 'fps60_1080p=0\n' >> hwder_settings.ini
+fi
 echo "== $(sha256sum few | cut -c1-16)…  few, teste de $SECS s em DISPLAY=$DISP${INPUT:+, roteiro $INPUT}${FRESH:+, save vazio}"
 export DISPLAY=$DISP XDG_RUNTIME_DIR=/run/user/$(id -u) HWDER_OFFSCREEN=1 HWDER_MUTE=1 HWDER_NO_PRELAUNCH=1
 [ -n "$INPUT" ] && export HWDER_INPUT_SCRIPT=$INPUT
@@ -55,3 +67,12 @@ echo "== log"
 grep -E 'vulkan: |nsp: (program|update|version)|aoc:|vi: first frame|display: 300 frames|fatal|error|unimplemented instruction|\[shader\]|mem: no write watch|write watch|frame fence|hang: gpu|gpu thread busy|per frame: [0-9.]+ dispatches' hwder.log | head -80
 echo "== últimas linhas"; tail -n 6 hwder.log
 EOF
+
+if [ -n "${DECK_PACE:-}" ]; then
+    ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+    mkdir -p "$ROOT/build"
+    ssh_deck -n "grep 'pace: present' '$DEST/hwder.log'" > "$ROOT/build/deck_pace.log" || true
+    echo "== ritmo de quadros (build/deck_pace.log)"
+    PY=$(command -v python3 || command -v python)
+    "$PY" "$ROOT/tools/pace_summary.py" "$ROOT/build/deck_pace.log" || true
+fi
