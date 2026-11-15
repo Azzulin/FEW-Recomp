@@ -578,35 +578,42 @@ private:
         std::vector<VkDescriptorImageInfo> images;
         std::vector<VkBufferView> texels;
     };
-    // Storage buffers (shader global memory), one per guest range start. While the GPU copy holds writes that guest
-    // memory lacks, `pending` is the serial of the command buffer that wrote them; when it completes the waiter thread
-    // copies the buffer back to guest memory and clears it. Until then every bind uses the GPU copy, so dispatches
-    // that pass data through memory (count, compact, write arguments) see each other's results.
+    // Storage buffers (shader global memory), one per guest range start. The GPU copy is the working one: every bind
+    // uses it, so dispatches that pass data through memory (count, compact, write arguments) see each other's
+    // results. Guest memory follows it both ways:
+    //  - what the game writes goes up at the next bind (gmem_upload_changed: the words that differ from the mirror);
+    //  - what the GPU writes comes back when the command buffer completes (gmem_record_copybacks, gmem_merge).
+    // `pending` is the serial of the last command buffer that writes the buffer, until its copy-back is merged.
     // The buffer is device-local: shaders reading host memory through it ran ~0.7 ms per one-workgroup launch on the
     // Steam Deck (RADV maps CPU-coherent memory uncached for the GPU). Guest data goes in by a staged copy, and back
-    // by a GPU copy into `readback` (host-cached) when the command buffer is submitted (gmem_record_copybacks).
+    // by a GPU copy into a host-cached readback.
     struct GmemBuf {
         u8* host = nullptr;
         u64 size = 0;         // bytes of the VkBuffer
-        u64 guest_bytes = 0;  // bytes mirrored from and to guest memory
+        u64 guest_bytes = 0;  // bytes mirrored from and to guest memory at the last bind (0: compare whole next time)
         Buffer buf{};
-        Buffer readback{};    // host-visible, host-cached copy target for the copy-back
         std::atomic<u64> pending{0};
         u64 last_use = 0;
-        u64 copyback_serial = 0;  // serial whose completion already has a copy-back queued (one per command buffer)
-        u64 watch_epoch = 0;      // write-watch epoch of the last refresh from guest memory (tc_.written_since)
-        u64 uploaded_bytes = 0;   // guest bytes the buffer holds (0: never filled)
-        u64 copyback_bytes = 0;   // bytes the last recorded copy-back copies
-        // Bytes at the start of `readback` equal to the GPU copy while nothing is pending: the last copy-back, kept up
-        // to date by gmem_upload_changed. Written by the waiter thread before `pending` is released.
-        std::atomic<u64> mirror_bytes{0};
+        u64 copyback_serial = 0;  // serial that already has this buffer in gmem_copyback_ (one copy-back per command buffer)
+        u64 watch_epoch = 0;      // write-watch epoch of the last check of guest memory (tc_.written_since)
+        // The rest is shared by the command thread (binds) and the waiter thread (merges), under `m`.
+        std::mutex m;
+        // `size` bytes: the GPU copy as of the last merged copy-back, plus the uploads recorded since. The common
+        // ancestor that tells the game's writes from the GPU's.
+        std::unique_ptr<u8[]> mirror;
+        struct Upload {
+            u64 off, size, serial;
+        };
+        std::vector<Upload> uploads;         // made while GPU writes were in flight, until a copy-back includes them
+        std::vector<Buffer> free_readbacks;  // host-cached copy targets, reused (one in use per command buffer in flight)
     };
     std::unordered_map<u8*, GmemBuf*> gmem_;
     std::atomic<u64> gmem_pending_max_{0};  // highest serial with GPU writes not yet copied back (fast check)
     std::vector<GmemBuf*> gmem_copyback_;  // written in the command buffer being recorded: copied back at submit
+    std::vector<u64> gmem_pages_;          // scratch: written pages of the range being bound
     VkDescriptorBufferInfo gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written);
-    void gmem_upload(GmemBuf* gb, const u8* src, u64 bytes);
-    void gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes);  // only the blocks that differ from the mirror
+    void gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes, const std::vector<u64>* pages);
+    static void gmem_merge(GmemBuf* gb, Buffer rb, u64 n, u64 serial);
 
 public:
     void gmem_record_copybacks();  // Recorder::flush, before the command buffer ends (g_before_submit_gmem)

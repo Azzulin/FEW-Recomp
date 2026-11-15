@@ -382,6 +382,7 @@ private:
             // bounded wait would show half-drawn frames (UI layers without their text, clear-colour flashes).
             for (u32 i = 0; i < std::min<u32>(q.in.fence.num_fences, 4); i++) {
                 int waited = 0;
+                host::timeline("comp fence wait", q.in.fence.fences[i].id, q.in.fence.fences[i].value);
                 while (!nv::syncpoint_wait(q.in.fence.fences[i].id, q.in.fence.fences[i].value, 1000000000ll)) {
                     if (++waited == 1 || waited % 10 == 0)
                         hw_log("vi: frame fence %u:%u not reached after %d s (value %u) - still waiting", q.in.fence.fences[i].id,
@@ -428,6 +429,7 @@ private:
             if (fb.release_hz) fb.on_captured = [&] { release_now(0); };
             if (fb.address) gpu::renderer()->present(fb);
             u64 ticket = fb.address ? display::last_present_ticket() : 0;
+            host::timeline("comp presented", ticket);
             if (released) {
                 if (frame == 1) {
                     hw_log("vi: first frame presented (%ux%u)", fb.width, fb.height);
@@ -457,6 +459,7 @@ private:
                     prev_ticket = slots_[presented].present_ticket;
                 }
                 wait_screen_read(prev_ticket, presented);
+                host::timeline("comp screen read", prev_ticket);
             }
             {
                 std::lock_guard<std::mutex> l(m_);

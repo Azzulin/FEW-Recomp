@@ -120,6 +120,10 @@ if [ -f hwder_settings.ini ]; then
         echo "$kv" >> hwder_settings.ini
     done
 fi
+# Sobreposição de quadros: o jogo prepara o quadro seguinte enquanto a GPU desenha o atual. É o que segura os 30 fps
+# na luta densa com as partículas ligadas (medido no Deck em 2026-11-15: 29,8 fps contra 24-29 em série).
+# FEW_SERIAL=1 nas opções de inicialização volta ao modo em série.
+[ -n "${FEW_SERIAL:-}" ] || export HWDER_FRAME_OVERLAP=1
 exec ./few "$@"
 '@
 

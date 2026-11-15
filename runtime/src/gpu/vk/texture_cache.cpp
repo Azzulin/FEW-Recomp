@@ -468,7 +468,7 @@ void TextureCache::validate(Image* img) {
 
 int TextureCache::written_since_check(Image* img) { return written_since(img->addr, img->readable, img->watch_epoch); }
 
-int TextureCache::written_since(u64 addr, u64 size, u64& watch_epoch) {
+int TextureCache::written_since(u64 addr, u64 size, u64& watch_epoch, std::vector<u64>* pages) {
     u64 start = addr & ~0xFFFull, end = (addr + size + 0xFFF) & ~0xFFFull;
     if (start == end) return 0;
     // One query per 2 MiB block and guest submission instead of one per image: a frame validates hundreds of
@@ -517,9 +517,14 @@ int TextureCache::written_since(u64 addr, u64 size, u64& watch_epoch) {
         recent = w != watch_written_.end() && w->second >= since;
     }
     if (!recent) return 0;
+    int written = 0;
     for (auto it = written_pages_.lower_bound(start); it != written_pages_.end() && it->first < end; ++it)
-        if (it->second >= since) return 1;
-    return 0;
+        if (it->second >= since) {
+            if (!pages) return 1;
+            pages->push_back(it->first);
+            written = 1;
+        }
+    return written;
 }
 
 // The sRGB/UNORM twin of a colour format (a render target the game also samples in the other encoding), or

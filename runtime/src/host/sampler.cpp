@@ -16,6 +16,7 @@ volatile unsigned char g_sample_phase = 0;
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 #include "debug_flags.h"
@@ -43,7 +44,9 @@ bool timeline_init() {
     counter(&now);
     g_tl_freq = f.QuadPart;
     g_tl_start = now.QuadPart + (long long)(std::atof(e) * f.QuadPart);
-    g_tl_end = g_tl_start + f.QuadPart / 2;
+    const char* comma = std::strchr(e, ',');  // "<start>,<seconds>": a longer window than the default 0.5 s
+    const double secs = comma ? std::atof(comma + 1) : 0.5;
+    g_tl_end = g_tl_start + (long long)((secs > 0 ? secs : 0.5) * f.QuadPart);
     g_tl = static_cast<TlEvent*>(std::calloc(kTlMax, sizeof(TlEvent)));
     const char* log = debug::str(debug::Log);
     std::string path = std::string(log && *log ? log : "hwder.log") + ".timeline.txt";
@@ -92,6 +95,7 @@ void timeline_event(const char* what, unsigned long long a, unsigned long long b
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <map>

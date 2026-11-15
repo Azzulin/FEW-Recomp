@@ -309,8 +309,10 @@ public:
     u64 upload_bytes = 0;
     u64 hash_budget_epoch_ = 0, hash_budget_ = 0;
     int written_since_check(Image* img);  // 1 written, 0 clean, -1 memory not write-watched
-    // The same for any guest range; `watch_epoch` is the caller's record of its last check (0 at first).
-    int written_since(u64 addr, u64 size, u64& watch_epoch);
+    // The same for any guest range; `watch_epoch` is the caller's record of its last check (0 at first). With
+    // `pages`, a result of 1 also appends the written pages' addresses (ascending); none appended means the whole
+    // range (the reports from before the last check are gone).
+    int written_since(u64 addr, u64 size, u64& watch_epoch, std::vector<u64>* pages = nullptr);
     u64 epoch() const { return epoch_; }
     void download(Image* img);  // write GPU data back to guest memory (waits for the GPU)
     void collect_garbage();

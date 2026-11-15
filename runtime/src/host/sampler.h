@@ -12,7 +12,8 @@ void sample_current_thread(int period_us, const std::string& path);
 extern volatile unsigned char g_sample_phase;
 void name_sample_phase(unsigned char phase, const char* name);
 
-// HWDER_TIMELINE=<seconds>: from that many seconds after start, record timeline events for 0.5 s and write
+// HWDER_TIMELINE=<seconds>[,<length>]: from that many seconds after start, record timeline events for 0.5 s (or
+// <length> seconds) and write
 // them to <log>.timeline.txt (time in us, thread, event, two values). Diagnostics only; a no-op otherwise.
 bool timeline_on();
 void timeline_event(const char* what, unsigned long long a = 0, unsigned long long b = 0);

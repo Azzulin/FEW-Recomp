@@ -10,6 +10,7 @@
 #            DECK_INPUT=tools/input/battle_long.txt  roteiro de entrada (HWDER_INPUT_SCRIPT), copiado para o Deck
 #            DECK_FRESH=1  começa com save vazio: o save do Deck é guardado antes e volta no fim (o do teste some)
 #            DECK_ENV="HWDER_THREAD_STATS=1 ..."  variáveis extras para o jogo
+#            DECK_SERIAL=1  sem a sobreposição de quadros (HWDER_FRAME_OVERLAP), que o lançador do Deck liga
 #            DECK_PACE=1  liga HWDER_PACE_TRACE, traz as linhas "pace:" para build/deck_pace.log e resume o fps por
 #                         janela de 20 s com tools/pace_summary.py
 #
@@ -31,6 +32,8 @@ fi
 
 EXTRA_ENV=${DECK_ENV:-}
 [ -n "${DECK_PACE:-}" ] && EXTRA_ENV="$EXTRA_ENV HWDER_PACE_TRACE=1"
+# Como no few-steam.sh: sobreposição de quadros ligada; DECK_SERIAL=1 mede o modo em série.
+[ -n "${DECK_SERIAL:-}" ] || EXTRA_ENV="$EXTRA_ENV HWDER_FRAME_OVERLAP=1"
 
 # O ssh junta os argumentos numa linha que a shell do Deck separa de novo: cada um vai citado (%q), senão um
 # DECK_ENV com espaços vira vários argumentos e só a primeira variável chega ao jogo.

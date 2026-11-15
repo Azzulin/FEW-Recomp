@@ -660,55 +660,57 @@ static Buffer gmem_buffer(u64 bytes) {
     return b;
 }
 
-// Guest memory -> the device-local buffer: staged in the ring, copied on the GPU before the work that binds it.
-void VkRenderer::gmem_upload(GmemBuf* gb, const u8* src, u64 bytes) {
-    if (g_dtrace) hw_log("dtrace: upload %llx+%llx", (unsigned long long)(uintptr_t)src, (unsigned long long)bytes);
-    Slice s = g_rec.stage(bytes, 16);
-    memcpy(s.ptr, src, bytes);
-    g_rec.cmd();
-    const VkBuffer from = s.buf, to = gb->buf.buf;
-    const VkDeviceSize off = s.offset;
-    g_rec.record([from, to, off, bytes](VkCommandBuffer cb) {
-        VkBufferCopy c{off, 0, bytes};
-        vkCmdCopyBuffer(cb, from, to, 1, &c);
-        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
-                           VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
-                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 1, &mb, 0, nullptr, 0, nullptr);
-    });
-}
-
-// The copy-back of a buffer the GPU wrote is itself a write to guest memory, so the next frame's bind finds the
-// range written and would upload it whole again: in a battle ~150 particle buffers (up to ~1 MB each, ~30 MB per
-// frame) went guest -> GPU -> guest every frame. Comparing with the mirror (the readback, equal to the GPU copy)
-// finds what the game itself changed since, at 4 KiB granularity; usually nothing.
-void VkRenderer::gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes) {
-    constexpr u64 kBlock = 4096;
-    u8* mirror = gb->readback.map;
+// Guest memory -> the device-local buffer, only the words that differ from the mirror (what the GPU copy held at the
+// last merged copy-back, plus the uploads since): staged in the ring, copied on the GPU before the work that binds it.
+// The copy-back of a buffer the GPU wrote is itself a write to guest memory, so the write watch reports the range
+// and a whole upload would send ~150 particle buffers (up to ~1 MB each, ~30 MB per frame) guest -> GPU -> guest
+// every frame; the comparison finds what the game itself changed, usually nothing. `pages` (written pages, host
+// addresses) limits the comparison; null compares the whole range.
+// While GPU writes are in flight (`pending`) a word equal to the mirror may be newer on the GPU, so only the words
+// that differ go up (the game wrote them after submitting that work); each run is remembered with the serial that
+// carries it, for gmem_merge to leave it alone in copy-backs taken before it.
+void VkRenderer::gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes, const std::vector<u64>* pages) {
+    std::lock_guard<std::mutex> l(gb->m);
+    const bool exact = gb->pending.load(std::memory_order_acquire) != 0;
+    const u64 join = exact ? 0 : 256;  // nothing in flight: the mirror is the GPU copy, equal words may ride along
+    u8* mirror = gb->mirror.get();
     std::vector<VkBufferCopy> regions;
-    u64 total = 0;
-    for (u64 off = 0; off < bytes;) {
-        u64 n = std::min(kBlock, bytes - off);
-        if (memcmp(src + off, mirror + off, n) == 0) {
-            off += n;
-            continue;
+    auto scan = [&](u64 lo, u64 hi) {
+        constexpr u64 kBlock = 512;
+        for (u64 off = lo; off < hi;) {
+            const u64 n = std::min(kBlock, hi - off);
+            if (memcmp(src + off, mirror + off, n) == 0) {
+                off += n;
+                continue;
+            }
+            for (const u64 end = off + n; off < end;) {
+                const u64 w = std::min<u64>(4, end - off);
+                if (memcmp(src + off, mirror + off, w) != 0) {
+                    if (!regions.empty() && regions.back().dstOffset + regions.back().size + join >= off)
+                        regions.back().size = off + w - regions.back().dstOffset;
+                    else
+                        regions.push_back({0, off, w});
+                }
+                off += w;
+            }
         }
-        const u64 start = off;
-        for (off += n; off < bytes; off += n) {
-            n = std::min(kBlock, bytes - off);
-            if (memcmp(src + off, mirror + off, n) == 0) break;
+    };
+    if (pages) {
+        const u64 base = (u64)(uintptr_t)src;
+        for (u64 p : *pages) {
+            const u64 lo = (p > base ? p - base : 0) & ~3ull, hi = std::min(bytes, p + 4096 - base);
+            if (lo < hi) scan(lo, hi);
         }
-        regions.push_back({0, start, off - start});
-        total += off - start;
+    } else {
+        scan(0, bytes);
     }
+    u64 total = 0;
+    for (const VkBufferCopy& r : regions) total += r.size;
     if (g_dtrace)
-        hw_log("dtrace: upload %llx+%llx changed %llu bytes in %zu runs", (unsigned long long)(uintptr_t)src,
-               (unsigned long long)bytes, (unsigned long long)total, regions.size());
+        hw_log("dtrace: upload %llx+%llx changed %llu bytes in %zu runs%s", (unsigned long long)(uintptr_t)src,
+               (unsigned long long)bytes, (unsigned long long)total, regions.size(), exact ? " (GPU writes in flight)" : "");
     if (regions.empty()) return;
+    const u64 serial = g_rec.serial();
     Slice s = g_rec.stage(total, 16);
     u64 at = 0;
     for (VkBufferCopy& r : regions) {
@@ -717,6 +719,7 @@ void VkRenderer::gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes) {
         memcpy(s.ptr + at, mirror + r.dstOffset, r.size);
         r.srcOffset = s.offset + at;
         at += r.size;
+        if (exact) gb->uploads.push_back({r.dstOffset, r.size, serial});
     }
     g_rec.cmd();
     const VkBuffer from = s.buf, to = gb->buf.buf;
@@ -743,8 +746,10 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
     GmemBuf* gb = slot;
     if (gb && gb->size < bytes) {
         // Grows. Called while a draw or dispatch is being built, so no flush here: GPU writes the old buffer holds are
-        // carried over by a copy on the GPU, and this bind then counts as a write (its copy-back covers them).
+        // carried over by a copy on the GPU (the mirror keeps what it has; the new tail is zero on both).
         Buffer old = gb->buf, nb = gmem_buffer(bytes);
+        std::lock_guard<std::mutex> l(gb->m);
+        std::unique_ptr<u8[]> mirror(new u8[bytes]());
         if (gb->pending.load()) {
             const VkBuffer o = old.buf, n = nb.buf;
             const VkDeviceSize sz = old.size;
@@ -754,10 +759,12 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
                 vkCmdCopyBuffer(cb, o, n, 1, &c);
                 full_barrier(cb);
             });
-            written = true;
+            memcpy(mirror.get(), gb->mirror.get(), gb->size);
         } else {
-            gb->uploaded_bytes = 0;  // refilled from guest memory below
+            gb->uploads.clear();
         }
+        gb->guest_bytes = 0;  // compared whole with the mirror below
+        gb->mirror = std::move(mirror);
         retire_resource([old]() mutable { destroy_buffer(old); });
         gb->buf = nb;
         gb->size = bytes;
@@ -767,70 +774,55 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
         gb->host = src;
         gb->size = bytes;
         gb->buf = gmem_buffer(bytes);
+        gb->mirror.reset(new u8[bytes]());  // the buffer starts zero-filled
+    }
+    {
+        // Bring the GPU copy up to date with what the game wrote, unless nothing wrote the range since the last check
+        // (write watch; a range outside it always compares). ~700 launches per battle frame bind these buffers. The
+        // copy is ordered on the queue after the work that used the previous contents.
+        gmem_pages_.clear();
+        const int changed = tc_.written_since((u64)(uintptr_t)src, guest_bytes, gb->watch_epoch, &gmem_pages_);
+        const bool whole = changed < 0 || guest_bytes != gb->guest_bytes || (changed > 0 && gmem_pages_.empty());
+        if (whole || changed > 0) gmem_upload_changed(gb, src, guest_bytes, whole ? nullptr : &gmem_pages_);
     }
     gb->guest_bytes = guest_bytes;
     const u64 serial = g_rec.serial();
-    if (!gb->pending.load()) {
-        // Guest memory is current: refresh the GPU copy, unless nothing wrote the range since the last refresh (write
-        // watch; a range outside it always refreshes). ~700 launches per battle frame bind these buffers. The copy is
-        // ordered on the queue after the work that used the previous contents.
-        const int changed = tc_.written_since((u64)(uintptr_t)src, guest_bytes, gb->watch_epoch);
-        if (changed != 0 || gb->uploaded_bytes != guest_bytes) {
-            if (gb->uploaded_bytes == guest_bytes && gb->readback.map &&
-                gb->mirror_bytes.load(std::memory_order_relaxed) >= guest_bytes) {
-                gmem_upload_changed(gb, src, guest_bytes);
-            } else {
-                gmem_upload(gb, src, guest_bytes);
-                gb->uploaded_bytes = guest_bytes;
-                gb->mirror_bytes.store(0, std::memory_order_relaxed);
-            }
-        }
-    }
     gb->last_use = serial;
     if (written) {
-        gb->pending.store(serial);
+        gb->pending.store(serial, std::memory_order_release);
         if (gmem_pending_max_.load() < serial) gmem_pending_max_.store(serial, std::memory_order_release);
         if (gb->copyback_serial != serial) {  // one copy-back per command buffer, however many binds write it
             gb->copyback_serial = serial;
-            if (gb->readback.size < gb->size) {
-                gb->mirror_bytes.store(0, std::memory_order_relaxed);
-                Buffer old = gb->readback;
-                if (old.buf) retire_resource([old]() mutable { destroy_buffer(old); });
-                gb->readback = create_buffer(gb->size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
-            }
             gmem_copyback_.push_back(gb);  // the GPU copy is recorded when this command buffer is submitted
-            g_rec.defer([gb, serial] {     // waiter thread, once it completed
-                if (gb->pending.load() != serial) return;  // written again later: that copy-back runs instead
-                // Only the pages whose contents differ are written: a write to guest memory marks the page in the
-                // texture cache's write watch, so the next bind would compare the whole buffer with the mirror. In a
-                // dense battle the particle shaders rewrite ~30 MB per frame and ~120 KiB of it changes (Steam Deck,
-                // "vk deferred" on the HWDER_TIMELINE).
-                const u8* from = gb->readback.map;
-                u8* to = gb->host;
-                u64 changed = 0;
-                for (u64 off = 0, n; off < gb->guest_bytes; off += n) {
-                    n = std::min<u64>(4096 - (((u64)(uintptr_t)to + off) & 4095), gb->guest_bytes - off);
-                    if (memcmp(to + off, from + off, n) == 0) continue;
-                    memcpy(to + off, from + off, n);
-                    changed += n;
-                }
-                g_copyback_changed.fetch_add(changed, std::memory_order_relaxed);
-                g_copyback_total.fetch_add(gb->guest_bytes, std::memory_order_relaxed);
-                gb->mirror_bytes.store(std::min(gb->guest_bytes, gb->copyback_bytes), std::memory_order_relaxed);
-                gb->pending.store(0, std::memory_order_release);
-            });
         }
     }
     return {gb->buf.buf, 0, bytes};
 }
 
+// Before the command buffer is submitted: every buffer it wrote is copied on the GPU into a readback of its own, and
+// the waiter thread merges that into guest memory when the command buffer completes. One readback per command
+// buffer: with frames overlapping (HWDER_FRAME_OVERLAP) the next frame writes the buffer again before this one
+// finishes, and every frame's results still have to reach the guest (the particles' vertices and indirect draw
+// arguments are read from guest memory).
 void VkRenderer::gmem_record_copybacks() {
     if (gmem_copyback_.empty()) return;
     std::vector<std::tuple<VkBuffer, VkBuffer, VkDeviceSize>> copies;
     copies.reserve(gmem_copyback_.size());
+    const u64 serial = g_rec.serial();
     for (GmemBuf* gb : gmem_copyback_) {
-        copies.emplace_back(gb->buf.buf, gb->readback.buf, gb->guest_bytes);
-        gb->copyback_bytes = gb->guest_bytes;
+        Buffer rb{};
+        {
+            std::lock_guard<std::mutex> l(gb->m);
+            if (!gb->free_readbacks.empty()) {
+                rb = gb->free_readbacks.back();
+                gb->free_readbacks.pop_back();
+            }
+        }
+        if (rb.buf && rb.size < gb->size) destroy_buffer(rb);  // from before the buffer grew; its copy completed
+        if (!rb.buf) rb = create_buffer(gb->size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
+        const u64 n = gb->guest_bytes;
+        copies.emplace_back(gb->buf.buf, rb.buf, n);
+        g_rec.defer([gb, rb, n, serial] { gmem_merge(gb, rb, n, serial); });
     }
     gmem_copyback_.clear();
     g_rec.cmd();
@@ -846,6 +838,55 @@ void VkRenderer::gmem_record_copybacks() {
         }
         // Recorder::flush ends the command buffer with a full barrier: the copies are then visible to the host.
     });
+}
+
+// Waiter thread, when command buffer `serial` completed: `rb` holds the first `n` bytes of the buffer as that command
+// buffer left them. A three-way merge per 32-bit word, with the mirror as the common ancestor:
+//  - the GPU did not change the word: nothing (whatever the game wrote since stays, and goes up at the next bind);
+//  - the GPU changed it and the game did not: the new value goes to guest memory;
+//  - both changed it: the game's write is the later one (it came after it submitted that work) and stays; the mirror
+//    takes the GPU's value, so the next bind sees the difference and uploads the game's;
+//  - the word was uploaded in a later command buffer than this one: this copy-back predates the upload, skipped.
+// Guest pages with no change are not written at all: a write marks the page in the write watch and the next bind
+// would compare it. In a dense battle the particle shaders rewrite ~30 MB per frame and ~120 KiB of it changes
+// (Steam Deck, "vk deferred" on the HWDER_TIMELINE).
+void VkRenderer::gmem_merge(GmemBuf* gb, Buffer rb, u64 n, u64 serial) {
+    {
+        std::lock_guard<std::mutex> l(gb->m);
+        auto& ups = gb->uploads;
+        ups.erase(std::remove_if(ups.begin(), ups.end(), [serial](const GmemBuf::Upload& u) { return u.serial <= serial; }),
+                  ups.end());
+        const u8* snap = rb.map;
+        u8* mirror = gb->mirror.get();
+        u8* to = gb->host;
+        u64 changed = 0;
+        for (u64 off = 0, len; off < n; off += len) {
+            len = std::min<u64>(4096 - (((u64)(uintptr_t)to + off) & 4095), n - off);
+            if (memcmp(snap + off, mirror + off, len) == 0) continue;
+            for (u64 o = off; o < off + len;) {
+                const u64 w = std::min<u64>(4, off + len - o);
+                if (memcmp(snap + o, mirror + o, w) != 0) {
+                    bool later = false;
+                    for (const GmemBuf::Upload& u : ups) later |= o < u.off + u.size && u.off < o + w;
+                    if (!later) {
+                        if (memcmp(to + o, mirror + o, w) == 0) memcpy(to + o, snap + o, w);
+                        memcpy(mirror + o, snap + o, w);
+                    }
+                }
+                o += w;
+            }
+            changed += len;
+        }
+        g_copyback_changed.fetch_add(changed, std::memory_order_relaxed);
+        g_copyback_total.fetch_add(n, std::memory_order_relaxed);
+        u64 expect = serial;  // not written again since: guest memory is current
+        gb->pending.compare_exchange_strong(expect, 0, std::memory_order_release);
+        if (gb->free_readbacks.size() < 3 && rb.size >= gb->size) {
+            gb->free_readbacks.push_back(rb);
+            return;
+        }
+    }
+    destroy_buffer(rb);
 }
 
 void VkRenderer::gmem_sync(u64 addr, u64 size) {

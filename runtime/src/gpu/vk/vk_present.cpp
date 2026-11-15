@@ -1,6 +1,7 @@
 // Presenting a frame of the Vulkan renderer: the picture post-process (FXAA / sharpening on the tonemapped
 // picture) and present(), which picks the presented image, blacks out stale ultrawide side bands, runs the frame
 // diagnostics and hands the image to the display. Moved text-for-text from vk_renderer.cpp.
+#include "host/sampler.h"
 #include "gpu/settings.h"
 #include "host/timing.h"
 #include "host/platform.h"
@@ -239,10 +240,12 @@ void VkRenderer::present(const FramebufferInfo& fb) {
     host::counter_frequency(&ptf);
     host::counter(&pt0);
     {
+        host::timeline("present lock");
         present_waiting_.fetch_add(1, std::memory_order_acq_rel);
         std::lock_guard<std::recursive_mutex> l(m_);
         present_waiting_.fetch_sub(1, std::memory_order_acq_rel);
         host::counter(&pt1);
+        host::timeline("present locked");
         process_invalidations();
         // Several images can share the presented address (a 3D render target, a VIC/CPU-written movie
         // frame, a differently sized alias). Take the most recently written one, and if the CPU wrote
@@ -487,16 +490,19 @@ void VkRenderer::present(const FramebufferInfo& fb) {
     }
     // Includes the frame limiter's wait (a full 33 ms at swap interval 2), hence the high threshold.
     SlowTimer timer("present", 60.0);
+    host::timeline("present recorded", (unsigned long long)capture_serial, hold >= 0);
     ProfScope ps(kProfPresent);
     if (hold >= 0) {
         wait_serial(capture_serial);  // the copy has run: the guest buffer is no longer needed
         fb.on_captured();
     }
+    host::timeline("present captured");
     // The present waits for this serial on the same queue: it must not go in before the serial's own submit
     // (the queue would wait for a signal queued behind it, a GPU hang).
     // Read once: the GPU thread may flush (advance the serial) meanwhile.
     const u64 wait_for = g_rec.serial() - 1;
     wait_submitted(wait_for);
+    host::timeline("present submitted", wait_for);
     if (submitted_serial() < wait_for) {  // cannot happen after wait_submitted: catches a broken ordering
         static int n = 0;
         if (n++ < 5) hw_log("vk: ERROR: present queued before serial %llu was submitted", (unsigned long long)wait_for);
