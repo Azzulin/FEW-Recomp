@@ -283,13 +283,22 @@ static void i2m_launch(Channel* ch, EngineI2M& e, const u32* r, u32 launch) {
     e.data.reserve((size_t)e.line_length * e.line_count);
     e.active = true;
 }
-static void i2m_data(Channel* ch, EngineI2M& e, u32 value) {
+static void i2m_finish(Channel* ch, EngineI2M& e);
+// Data words of the current transfer: per word from a method call, or a whole run at once from process_pushbuffer
+// (a battle frame streams ~10^5 words through here; per word, the timer and the vector append dominated).
+static void i2m_data_bulk(Channel* ch, EngineI2M& e, const u32* w, u32 n) {
     if (!e.active) return;
-    OpTimer t("inline-to-memory", e.line_length * (u64)e.line_count);
-    u8* p = (u8*)&value;
-    e.data.insert(e.data.end(), p, p + 4);
-    size_t total = (size_t)e.line_length * e.line_count;
-    if (e.data.size() < total) return;
+    const size_t total = (size_t)e.line_length * e.line_count;
+    const size_t need = e.data.size() < total ? (total - e.data.size() + 3) / 4 : 0;
+    const u32 k = (u32)std::min<size_t>(n, need);
+    const u8* p = (const u8*)w;
+    e.data.insert(e.data.end(), p, p + (size_t)k * 4);
+    if (e.data.size() >= total) i2m_finish(ch, e);
+}
+static void i2m_data(Channel* ch, EngineI2M& e, u32 value) { i2m_data_bulk(ch, e, &value, 1); }
+static void i2m_finish(Channel* ch, EngineI2M& e) {
+    const size_t total = (size_t)e.line_length * e.line_count;
+    OpTimer t("inline-to-memory", total);
     e.active = false;
     Renderer* rnd = renderer();
     MemoryManager* mm = ch->mm;
@@ -966,6 +975,51 @@ static void call_method(Channel* ch, u32 subch, u32 method, u32 value) {
     }
 }
 
+// A run of 3D constant buffer data (CB_DATA): one copy and one invalidation instead of one per word.
+static void cbuf_data_bulk(Engine3D& e, const u32* w, u32 n) {
+    using namespace m3d;
+    const u64 base = addr(e.regs, ConstBuffer + 1);
+    u32& pos = e.regs[ConstBuffer + 3];
+    u8* p = e.mm->translate(base + pos);
+    if (p && e.mm->contiguous_size(base + pos, (u64)n * 4) >= (u64)n * 4) {
+        memcpy(p, w, (size_t)n * 4);
+        renderer()->invalidate_region((u64)p, (u64)n * 4);
+        pos += n * 4;
+        return;
+    }
+    for (u32 k = 0; k < n; k++) method_3d(e, ConstBufferData, w[k]);
+}
+
+// Data-only methods that arrive as long runs (inline-to-memory data on the 3D, compute and I2M classes; 3D constant
+// buffer data): handled as one block. Returns how many of the n words it took (0: none, use the per-word path).
+static u32 put_method_run(Channel* ch, const u32* w, u32 n) {
+    auto& st = ch->pb;
+    if (n < 2 || method_trace()) return 0;
+    const u32 cls = ch->bound_class[st.subch];
+    if (st.method == 0x6D && st.mode == PbNonInc && (cls == 0xB197 || cls == 0xB1C0 || cls == 0xA140)) {
+        EngineI2M& ie = cls == 0xB197 ? ch->i2m3d : cls == 0xB1C0 ? ch->i2m_compute : ch->i2m;
+        i2m_data_bulk(ch, ie, w, n);
+        if (cls == 0xB197) ch->e3d.regs[0x6D] = w[n - 1];
+        else if (cls == 0xB1C0) ch->compute.regs[0x6D] = w[n - 1];
+        else ch->i2m.regs[0x6D] = w[n - 1];
+        return n;
+    }
+    if (cls == 0xB197 && st.method >= m3d::ConstBufferData && st.method < m3d::ConstBufferData + 16 &&
+        (st.mode == PbNonInc || st.mode == PbInc)) {
+        const u32 run = st.mode == PbNonInc ? n : std::min(n, m3d::ConstBufferData + 16 - st.method);
+        if (run < 2) return 0;
+        cbuf_data_bulk(ch->e3d, w, run);
+        if (st.mode == PbInc) {
+            ch->e3d.regs[st.method + run - 1] = w[run - 1];
+            st.method += run;
+        } else {
+            ch->e3d.regs[st.method] = w[run - 1];
+        }
+        return run;
+    }
+    return 0;
+}
+
 // A pushbuffer method: plain 3D register writes inline, everything else through call_method.
 static inline void put_method(Channel* ch, u32 subch, u32 method, u32 value) {
     if (ch->bound_class[subch] == 0xB197 && plain_3d(method) && !method_trace()) {
@@ -986,7 +1040,12 @@ static void process_pushbuffer(Channel* ch, const u32* words, u32 count) {
         // The guest just wrote these words on another core: fetch a few cache lines ahead.
         __builtin_prefetch(words + i + 64);
         if (st.count) {  // data of the current method, possibly begun in an earlier entry
-            const u32 take = std::min(st.count, count - i);
+            u32 take = std::min(st.count, count - i);
+            if (const u32 run = put_method_run(ch, words + i, take)) {
+                i += run;
+                st.count -= run;
+                take -= run;
+            }
             for (u32 k = 0; k < take; k++) {
                 put_method(ch, st.subch, st.method, words[i++]);
                 if (st.mode == PbInc) {

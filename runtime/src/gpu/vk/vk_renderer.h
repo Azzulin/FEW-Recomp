@@ -501,6 +501,13 @@ public:
     }
     void sync_gpu_writes(u64 addr, u64 size) override {
         if (!addr || !size || gmem_pending_max_.load(std::memory_order_acquire) <= g_s.completed.load()) return;
+        // NVN's indirect draws (the battle's GPU particles) take their arguments from memory a compute shader wrote just
+        // before. Waiting here for that work and its copy back drained the GPU about twice per battle frame and held
+        // the command thread idle half the time (2026-11-14: dense battle 30 -> 55-60 fps without it). The arguments
+        // read are then those of the last finished copy back, one or two frames old, consistent with the particle
+        // vertex data the CPU uploads from the same copy backs. HWDER_INDIRECT_SYNC=1 waits as before.
+        static const bool sync = debug::flag(debug::IndirectSync);
+        if (!sync) return;
         std::lock_guard<std::recursive_mutex> l(m_);
         gmem_sync(addr, size);
     }
