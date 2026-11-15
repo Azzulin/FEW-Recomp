@@ -33,7 +33,8 @@ struct Video {
     int sharpen = 0;            // contrast-adaptive sharpening of the 3D picture, percent (0 = off)
     bool keep_crowd_props = true;  // keep small stage props (fences, rubble) drawn when crowds are large (game/stage_props.cpp)
     bool battle_60fps = true;   // FEW: the game's Performance display mode, 60 fps battles (game/few_display_mode.cpp)
-    bool full_res_60 = true;    // FEW: with battle_60fps, render at the Quality mode's 1920x1080 instead of 1280x720
+    bool full_res_60 = false;   // FEW: with battle_60fps, render at the Quality mode's 1920x1080 instead of 1280x720
+                                // (off by default: dense battles at 1080p are GPU bound, 41-48 fps on an RTX 3050 Laptop)
 };
 
 struct Audio {

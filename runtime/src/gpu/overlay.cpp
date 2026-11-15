@@ -626,7 +626,7 @@ static void tab_graphics(bool& changed) {
          "time the game sets its display mode (at launch).");
     if (ImGui::Checkbox("1080p at 60 fps", &v.full_res_60)) changed = true;
     help("With 60 fps battles: render the 3D at the Quality mode's 1920x1080 instead of the Performance mode's\n"
-         "1280x720. Turn off on weaker GPUs. Takes effect at launch.");
+         "1280x720. Needs a strong GPU to hold 60 fps in big fights. Takes effect at launch.");
 
     section("Shaders");
     settings::Debug& d = settings::debug();
