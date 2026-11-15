@@ -83,8 +83,34 @@ O bloco de parâmetros do NVDEC traz `num_ref_idx_*_default_active_minus1` (1 e 
 - **Storage buffers em compute**: descritores no `c0` a partir de **0x310**, 16 bytes cada (`endereço baixo,
   endereço alto, tamanho, 0`). Ex.: descritor 1 (`c0[0x320]`) é um contador de 4 bytes; o 0 chega a 0x403f80 bytes.
 - Batalha com partículas: **~450–800 despachos de compute por quadro**, com um `WaitForIdle` do 3D entre eles.
+- Shaders da batalha do prólogo (dump de 2026-11-14): 170 programas (98 de fragmento, 57 de vértice, 15 de
+  cálculo). Os três de cálculo grandes das partículas têm 389–588 blocos (pilha CRS resolvida), 4–30 laços.
 - Há shaders com `SUST` (escrita em imagem, ainda no-op). Em 2x a composição cobre só o quadrante superior
   esquerdo, a forma típica de compute com grade em tamanho nativo (diagnóstico provável, não confirmado).
+
+## Modos de exibição e taxa de quadros
+
+Lido no código do `main` 1.5.0 com `tools/gxref.py` (2026-11-14); nomes em `tools/recomp/symbols.txt`. O FEW tem
+na própria opção do jogo os modos **Qualidade** (1080p, 30 fps na batalha) e **Desempenho** (60 fps).
+
+- `Display_SetMode` (`0x10008b7f1c`, `sys, modo`): grava o modo 0–5 em `sys+0x9cb4` e um id de configuração em
+  `sys+0x44` (modo 0→0, 1→3, 2→5, 3→7, 4→8, 5→9). Chamada **todo quadro** pela escolha do modo (portátil → 2; na
+  TV → 0 ou 1 conforme a opção Desempenho) e, nas cutscenes em tempo real (byte `sys+0xa6b2` ligado), o próprio
+  jogo volta o modo 1 para 0 (30 Hz) no meio do quadro.
+- `Display_GetSize`: saída 1920×1080 nos modos 0, 1, 3, 4; 1280×720 nos modos 2 e 5.
+- `Display_GetPresentInterval`: modos 1 e 4 → intervalo 1 (60 Hz) sempre; os outros → 2 (30 Hz) quando a cena tem
+  conteúdo (batalha), 1 nos menus. Duas flags globais forçam 2. Todo quadro o jogo grava o intervalo
+  (`g_PresentInterval`) e `60/intervalo` (`g_FrameRate`), que a lógica usa: **60 Hz no modo 1 não acelera o jogo.**
+- O intervalo chega ao NVN por `Display_Apply` → `GfxDevice_SetPresentInterval` (`dev+0x2adc`) →
+  `GfxWindow_Present` → `nvnWindowSetPresentInterval` (ponteiro no GOT `0x1001309980`).
+- Resolução dinâmica (`DynRes_Update`): passeia o id de configuração dentro do grupo do modo (ids 0–2: 1080p e
+  degraus menores; 3–4: 1280×720 e 1120×630; 5–6 portátil; 7–9 fixos), pelo "tempo de GPU" que lê em relatórios de
+  timestamp. Tabelas: grupo `0x1000dae718` = `[0,0,0,3,3,5,5,7,8,9]`, degraus `0x1000dae740` (pares baixo/cima).
+  No recomp esses timestamps saem quando a thread de comandos chega a eles, então o "tempo de GPU" inclui a latência
+  dela e a imagem cai para o menor degrau com a GPU ociosa.
+- `Display_ModelDrawDistance`: 1500 unidades no modo 1, 2000 nos outros (distância de desenho de personagens).
+- `Display_IsQualityMode` (modos 0, 2, 3, 5): só muda limiares da resolução dinâmica (média de 30 ou 60 quadros).
+- O runtime se apresenta como console na TV (`service/applet.cpp`), então um save novo roda no modo 0.
 
 ## Comparação com a versão japonesa v0 (dump descartado)
 

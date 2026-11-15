@@ -1,7 +1,8 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-13, fim da terceira rodada: travamento da batalha resolvido, memória global nos shaders de
-cálculo, build do Steam Deck. Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
+Atualizado em 2026-11-14 (noite). A quarta rodada (60 fps na batalha com as partículas ligadas) está commitada e
+medida no PC; o build do Deck com ela está **pronto em `Envio Deck`, mas não foi enviado nem testado** (o dono
+estava usando o aparelho). Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
 
 ## Estado
 
@@ -13,13 +14,24 @@ O jogo **roda nativo no Windows** a partir de base US v0 + update 1.5.0 + 5 DLCs
   poeira, riscos de velocidade), diálogos, HUD, minimapa e KO;
 - as 5 DLCs são listadas (`aoc:u`) e montadas pelo jogo (`OpenDataStorageByDataId`) no boot.
 
-**O travamento da batalha está resolvido** (seção "Travamento na batalha"): 330 s de `battle_long.txt` com cache
-frio, várias vezes, sem travar; antes travava sempre entre 100 e 150 s. Batalha a ~42 ms por quadro em média (o
-jogo pede 33), com picos de ~300 ms quando surge um efeito novo (compilação de pipeline).
+**Batalha a 60 fps no PC** (desde 2026-11-14): o jogo roda no seu próprio modo Desempenho (gancho
+`Display_SetMode`), a 1280×720 por padrão (`fps60_1080p=1` renderiza a 1920×1080). Menus e cutscenes em tempo real
+seguem como o jogo quer (60 e 30). Medido com `HWDER_PACE_TRACE=1` e `tools/pace_summary.py` no `battle_long.txt`
+(RTX 3050 Laptop, sem `HWDER_GPU_TIMING`), antes ~24 fps a 30 Hz pedidos:
 
-Tudo está no `main`. O ramo `wip/gpfifo-snapshot` foi incorporado (avanço rápido) e pode ser apagado.
+| Trecho | 720p (padrão) | 1080p |
+|---|---|---|
+| luta leve (85–165 s) | 59 fps, mediana 16,7 ms | 57–59 fps, mediana 16,8 ms |
+| luta densa (165–230 s) | 50–54 fps, mediana 17,0–17,5 ms, 19–28% > 20 ms | 41–48 fps, mediana 18,6–22 ms, 37–65% > 20 ms |
 
-**Steam Deck**: build Linux com `-march=znver2` feito no WSL e enviado ao cartão SD do Deck (seção "Steam Deck").
+A 1080p a luta densa é limitada pela GPU; a 720p o que sobra são quadros perdidos avulsos (pendência 2). Daí o
+padrão 720p, que é também o do próprio modo Desempenho do jogo.
+
+O travamento da batalha da terceira rodada segue resolvido.
+
+**Steam Deck**: o build que está no cartão SD é o de 2026-11-13 (30 fps, partículas da GPU desligadas por
+`HWDER_GMEM=0`). O build novo (`few` sha256 `0b31f52e…`, com o tradutor estruturado, o modo Desempenho a 720p e as
+partículas ligadas) está montado em `Envio Deck\FireEmblemWarriors`, falta enviar e medir (pendência 1).
 
 ## Como trabalhar
 
@@ -35,6 +47,12 @@ Tudo está no `main`. O ramo `wip/gpfifo-snapshot` foi incorporado (avanço ráp
 | Ajustes extras no teste | `-Ini "res_scale=2.000"`, `-Env "HWDER_GPU_TRACE=3;HWDER_IPC_TRACE=1"` |
 | Entradas descobertas em execução | o runtime grava `extra_entries.txt` ao lado do exe; `gerar-few.ps1` junta em `tools/recomp/extra_entries.txt` e regenera |
 | Fatos do dump | `tools/inspect_dump.py`, `tools/module_census.py`, `tools/movie_info.py`, `tools/service_names.py` |
+| Ritmo de quadros (fps real) | `-Env "HWDER_PACE_TRACE=1"`: uma linha `pace: present dt …` por quadro apresentado; resumir por janela |
+| Onde a thread de comandos gasta | `-Env "HWDER_SAMPLE_US=1000"` e `python tools\symbolize_samples.py build\run\hwder.log.samples.txt "Jogar no PC\few.exe"` |
+| Laço de quadros (jogo × thread da GPU) | `-Env "HWDER_TIMELINE=<s>"`: 0,5 s de eventos em `build\run\hwder.log.timeline.txt` (µs) |
+| Validar todos os shaders (WSL) | rodar com `HWDER_DUMP_SHADERS=1`, depois `wsl -d archlinux -u root -- bash "/mnt/c/…/tools/shadertest/wsl_validate.sh"` |
+| Engenharia reversa do `main` | `wsl -d archlinux -u root -- python3 "/mnt/c/…/tools/gxref.py" callers 0x…` (ver o cabeçalho) |
+| Modo 30 fps (Qualidade) / 720p | `-Ini "fps60=0"` / `-Ini "fps60_1080p=0"` |
 
 Testes rodam em `build\run` (save, ajustes e caches próprios), nunca em `Jogar no PC`, que é do jogador.
 O toolchain é o privado do HWDER, em `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\HWDER\managed-tools\…`
@@ -55,6 +73,90 @@ despertar, esquiva, troca de personagem, câmera), `pause_menu.txt` (abre a paus
 4. **Pushbuffer lido entrada por entrada** (`gpu/gpu.cpp process_pushbuffer`): o estado do método (método,
    subcanal, palavras que faltam) zerava a cada entrada do GPFIFO. No hardware o pushbuffer é um fluxo só, e os
    dados de um método podem continuar na entrada seguinte; agora o estado fica no canal (`Channel::pb`).
+
+## Sessão de 2026-11-14: 60 fps na batalha com as partículas (interrompida)
+
+Pedido do dono: batalha a 60 fps como o HWDER faz no HWDE, **sem desligar partículas**; testar no PC/WSL e levar ao
+Deck depois. Commitado em partes (de `231cdd4` em diante); o `few.exe` de `Jogar no PC` e o `few` de `Envio Deck`
+têm tudo.
+
+### 1. Controle de fluxo estruturado no tradutor de shaders (falta validar no Deck)
+
+- `runtime/src/shader/structurize.cpp` (novo): todo programa com mais de um bloco vira seleções e laços SPIR-V
+  aninhados (Ramsey, "Beyond Relooper", ICFP 2022, sobre a árvore de dominadores), em vez do laço+`switch`. Ajustes
+  para GPU: nó fora de um laço cujo dominador está dentro é posto **depois** do laço (reconvergência, barreiras); o
+  Block mais interno em volta de um Loop divide o merge com ele (saída de laço = `break` simples); saltos para fora
+  de mais de um construto guardam um código numa variável e são repassados de merge em merge. Grafo irredutível:
+  `StructureFailed` e o tradutor refaz com o dispatcher (log `structured control flow failed`).
+  `HWDER_SHADER_DISPATCHER=1` força o dispatcher antigo (comparação). O `kVersion` do `pipeline_warmup.bin` foi
+  para 3 (os SPIR-V antigos não são reaproveitados: a primeira batalha volta a compilar).
+- Por que o dispatcher era lento no AMD: o NIR transforma o `OpSwitch` numa cadeia linear de `if` (~400–600 casos
+  nos shaders das partículas), percorrida a cada salto entre blocos. A pressão de registradores **não** era o
+  problema: o estimador (`tools/shadertest/spv_pressure.py`) dá o mesmo pico de valores vivos (31–136) nas duas
+  formas e média menor na estruturada.
+- Validação: os 170 programas despejados da batalha do prólogo (98 fs, 57 vs, 15 cs) traduzem estruturados, sem
+  nenhum fallback; `spirv-val --target-env vulkan1.1` passa em todos menos 1 (`d17e7155f43e7e87`, `TEX` com AOFFI
+  não constante, problema antigo, pendência 4). No PC (NVIDIA) a batalha renderiza igual (capturas conferidas).
+  **Ainda não rodou no RADV**: as estatísticas do compilador do Deck (VGPR, spill, tempo) dependem do drm-shim do
+  Mesa (abaixo).
+- Ferramentas: o dump (`HWDER_DUMP_SHADERS=1`) agora grava também `shader_<chave>.<vs|fs|cs…>.bin` (SPH + código);
+  `tools/shadertest/wsl_validate.sh` traduz e valida todos no WSL; o `shadertest` compila no Linux e aceita grupo e
+  memória compartilhada (`one a.bin out.spv lx ly lz smem`); `listing_to_bin.py` refaz o binário a partir de uma
+  listagem antiga; `wsl_bench.sh` + `radv_stats.cpp` compilam com o RADV para o VanGogh e imprimem as estatísticas.
+- **RADV sem Deck**: o Mesa 26 tirou o dispositivo nulo do `RADV_FORCE_FAMILY`; agora é o drm-shim `amdgpu_noop`
+  (`LD_PRELOAD` + `AMDGPU_GPU_ID=vangogh`), que o Arch não empacota. No WSL `archlinux` já estão instalados
+  `vulkan-radeon` 26.2.6, `meson`, `python-mako` etc. e o fonte em `/root/mesa/mesa-26.2.6`; **configurar e compilar
+  o shim foi bloqueado pelo classificador de permissões da sessão**: o dono precisa autorizar (ou rodar ele mesmo
+  os comandos do cabeçalho de `wsl_bench.sh`).
+
+### 2. Modo Desempenho do próprio jogo: 60 Hz na batalha
+
+- Achado por engenharia reversa (`tools/gxref.py`, novo); fatos em [few.md](few.md#modos-de-exibição-e-taxa-de-quadros).
+  O jogo já sabe rodar a batalha a 60 Hz com a lógica no passo certo (grava `60/intervalo` todo quadro).
+- Ganchos (os primeiros do FEW, `runtime/src/game/few_display_mode.cpp`, sempre compilados, fora do
+  `HW_GAME_HOOKS`): `Display_SetMode` troca o modo 0 por 1 (e 3 por 4) quando o byte `sys+0xa6b2` está desligado e,
+  com `fps60_1080p`, grava o id de configuração 0 (1920×1080) no lugar do 3 (1280×720); `DynRes_Update` devolve
+  sempre o topo do grupo (sem as quedas falsas para 1120×630). O `symbols.txt` ganhou os nomes da cadeia toda.
+- Ajustes: `fps60` (padrão 1) e `fps60_1080p` (padrão 0, medido acima) no `hwder_settings.ini`, caixas "60 fps battles" e
+  "1080p at 60 fps" no menu (valem no próximo início). Desligar `fps60` volta ao modo Qualidade (30 fps).
+- Efeito colateral aceito: no modo 1 a distância de desenho de personagens é 1500 em vez de 2000
+  (`Display_ModelDrawDistance`; um gancho devolveria 2000 se fizer falta).
+- No log: `few: display mode 0 -> 1 (60 fps battles, ...)`, `display: swap interval 1` na batalha e `2` só na
+  cutscene em tempo real.
+
+### 3. Thread de comandos da GPU (o gargalo no PC a 60 Hz)
+
+Medidas (`battle_long.txt`, 60 Hz pedidos): o timeline mostrou a thread de comandos nunca ociosa e os quadros
+pesados (949 entradas) levando 20–22 ms nela; o amostrador novo mostrou **56% do tempo de parede parada em
+`gmem_sync`**.
+
+- **Argumentos dos draws indiretos sem espera** (`vk_renderer.h sync_gpu_writes`): antes de ler uma entrada do
+  GPFIFO escrita por shader de cálculo, a thread esperava a GPU terminar e copiar de volta (~2 vezes por quadro,
+  cada uma esvaziando a GPU). Agora lê o que a última cópia de volta deixou (1–2 quadros de atraso, coerente com os
+  vértices das partículas, que vêm das mesmas cópias). Luta leve de 40 para 58 fps; partículas conferidas nas
+  capturas. `HWDER_INDIRECT_SYNC=1` volta a esperar. As leituras de DMA (`flush_region`) continuam esperando. O
+  caminho certo de vez continua sendo o draw indireto na GPU (pendência 3).
+- **Dados embutidos em bloco** (`gpu.cpp put_method_run`): `LoadInlineData` do I2M (classes 3D, compute e I2M) e
+  `CB_DATA` do 3D eram tratados palavra por palavra, cada uma com um `OpTimer` (2× `QueryPerformanceCounter`),
+  `vector::insert` de 4 bytes e, no `CB_DATA`, um `invalidate_region` com mutex (`i2m_data` era ~30% do tempo
+  ocupado). Agora uma cópia e uma invalidação por sequência (`i2m_data_bulk`, `cbuf_data_bulk`); o caminho por
+  palavra fica para o resto. Com isso a luta densa foi de ~30 para 53–59 fps (720p).
+- Medido com `HWDER_GPU_TIMING` (que distorce os fps): GPU real ocupada ~9,5 ms por quadro a 720p e ~18,8 ms a
+  1080p na luta densa ("outside passes" de 8 para 16 ms). Sem o timing, 1080p não segura 60 na luta densa (tabela
+  em "Estado").
+
+### 4. Ferramentas e correções avulsas
+
+- **Amostrador no Windows** (`host/sampler.cpp`): `HWDER_SAMPLE_US=1000` agora funciona no Windows (relógio de
+  parede, suspende a thread e desenrola 12 quadros; cada relatório cobre os últimos 10 s). O `few.exe` tem DWARF,
+  que o DbgHelp não lê: `python tools/symbolize_samples.py build/run/hwder.log.samples.txt "Jogar no PC/few.exe"`
+  resolve com o `llvm-symbolizer` do toolchain (sem inlines) e grava `.sym.txt`. Funções de DLL do sistema saem
+  pelo export mais próximo (um "memcmp" ali era o `memcpy` do upload).
+- **eShop** (`service/applet.cpp`): um item de menu abre o applet 0x14 (`ShowShopPage`); o stub não devolvia dados
+  e o jogo abortava com `svcBreak` (aconteceu num teste, aos 39 s do `battle_long`). Agora fecha na hora como os
+  applets web (`ShopPageReturnValue` zerado). Dois `battle_long` completos depois disso sem queda.
+- `tools/gxref.py`: referências a strings e endereços, chamadores, escritas em campo, `MOV #imm`, tabelas. Roda no
+  Python do WSL (`pacman -S python-capstone python-lz4`, já instalados).
 
 ## Sessão de 2026-11-13: batalha (travamento, memória global, desempenho)
 
@@ -147,11 +249,10 @@ Resultado medido (`HWDER_THREAD_STATS=1`): `dispatch 4,5 ms`, `gmem 2,8 ms`, 2,2
 ### Taxa de quadros
 
 - Menus a 60 fps estáveis. Na batalha **o jogo pede 30 Hz** (swap interval 2). Antes das partículas a batalha
-  ficava em 33–35 ms; com elas, ~42 ms (pendência 1).
-- Para 60 fps na batalha há dois caminhos: (a) uma opção de taxa de quadros do próprio jogo, se existir, que só
-  aparece depois do prólogo (a pausa do prólogo não tem menu, conferido com `pause_menu.txt`); (b) os relógios de
-  frame do KTGL, como o AoC-Recomp fez (três relógios; mexer só no intervalo acelera o jogo). (b) depende dos
-  símbolos do FEW (pendência "Ganchos do jogo").
+  ficava em 33–35 ms; com elas, ~42 ms (resolvido na sessão de 2026-11-14).
+- Para 60 fps na batalha havia dois caminhos: (a) uma opção de taxa de quadros do próprio jogo; (b) os relógios
+  de frame do KTGL, como o AoC-Recomp fez. **Resolvido em 2026-11-14 pelo caminho (a)**: o jogo tem o modo
+  Desempenho e o gancho `Display_SetMode` o liga (seção "Sessão de 2026-11-14").
 
 ### Engasgos
 
@@ -206,7 +307,8 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   Deck) nem tipo de memória (buffers device-local também não). Causa provável: o laço+`switch` do tradutor com todos
   os registradores do guest vivos estoura os registradores no compilador da AMD (ACO) e despeja em scratch; a NVIDIA
   aguenta. Saída rápida: `HWDER_GMEM=0` (memória global como no-op: sem partículas da GPU, a validação dos draws
-  indiretos descarta os argumentos de lixo). Correção de verdade: pendência 1.
+  indiretos descarta os argumentos de lixo). Correção tentada: o tradutor estruturado (sessão de 2026-11-14), falta
+  medir no Deck (pendência 1).
 - **Com `HWDER_GMEM=0` a batalha roda a 30 fps no Deck** (~33,5 ms por quadro, o que o jogo pede; thread da GPU
   ~3,5 ms por quadro), com uma pausa única de ~2,5 s quando a primeira batalha começa (compilação dos shaders de
   cálculo pelo ACO). Por isso o `few-steam.sh` do pacote exporta `HWDER_GMEM=0` (a menos que já venha definido) e o
@@ -218,36 +320,35 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
 
 ## Pendências, por prioridade
 
-1. **Shaders de cálculo grandes no AMD (Steam Deck)**: reconstruir controle de fluxo estruturado no tradutor (hoje
-   todo programa com mais de um bloco vira laço+`switch` sobre os blocos, `translate.cpp run`), ou ao menos encurtar
-   a vida dos registradores do guest, para o ACO não despejar em scratch. Confirmar antes com estatísticas do
-   RADV (`RADV_DEBUG=shaderstats` ou `VK_KHR_pipeline_executable_properties`: VGPRs e scratch dos três shaders da
-   seção "Steam Deck"). Até lá, o Deck roda com `HWDER_GMEM=0` (sem partículas da GPU).
-2. **Ritmo da batalha no PC**: ~42 ms por quadro em média para 33 pedidos. Pistas, em ordem:
-   (a) a fase `present` do perfil (~20 ms por quadro; o perfil soma a thread do `vi`, que apresenta, à da GPU):
-   ver se é espera do apresentador;
-   (b) as esperas por escrita de shader (`vk: waiting for shader writes …`, ~3 por quadro, cada uma esvazia a GPU):
-   o caminho de vez é o do yuzu, desenhar o indireto na própria GPU (`vkCmdDrawIndirect` lendo o buffer onde o
-   compute escreveu), mas a macro 25 desenha quads, que hoje viram índices na CPU; (c) compilação de pipeline
-   síncrona (seção "Engasgos").
-3. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
+1. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em
+   `Envio Deck\FireEmblemWarriors`: `few-steam.sh` sem o `HWDER_GMEM=0` (as partículas voltam) e, como o envio
+   mantém o `.ini` do Deck, o lançador e o `testar-no-deck.sh` acrescentam `fps60_1080p=0` quando a chave falta.
+   (a) Enviar: `ARQUIVOS="few few-steam.sh LEIA-ME.txt" bash tools/deck/enviar-para-deck.sh`. (b) Medir a batalha
+   pelo SSH: `DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230`
+   (resume o fps por janela; o `kVersion` 3 do warmup faz a primeira batalha compilar de novo). (c) Se a batalha
+   ficar abaixo de 30 fps com as partículas, ver as estatísticas do RADV (drm-shim, seção da sessão de 2026-11-14:
+   precisa de autorização do dono para compilar o shim) e, enquanto isso, comparar com `fps60=0` (30 Hz) e com
+   `DECK_ENV="HWDER_GMEM=0"`; decidir o padrão do Deck.
+2. **Custo por despacho** (~600 por quadro na luta densa; é o que tira a luta densa de 60 a 720p): `gmem_upload`
+   recopia o buffer inteiro do descritor 0 (até 4 MB) quando o write-watch acusa qualquer página (copiar só as
+   páginas sujas); `written_since` chama `GetWriteWatch` por bind; `do_dispatch` monta `GuestEnv` com `std::function`
+   e lê o QMD a cada despacho. Medir com `HWDER_SAMPLE_US=1000` + `symbolize_samples.py` no trecho 165–230 s.
+3. **Draw indireto na GPU** (substitui a leitura atrasada dos argumentos): macro 25 com parâmetros vindos de memória
+   pendente vira `vkCmdDrawIndexedIndirect` lendo o buffer de `gmem` (quads viram índices de um buffer fixo; um
+   despacho pequeno converte `{contagem, instâncias, primeiro, instância base}` no comando indexado). Exige também
+   os vértices das partículas vindos do buffer da GPU, não da cópia no guest.
+4. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
    gráficos (não conferida); `SUST` (escrita em imagem, no-op), `AL2P` + `IPA` indexado, `TEX` com AOFFI não
-   constante. Todos logam uma vez com `[shader]`.
-4. **60 fps na batalha** (seção "Taxa de quadros").
+   constante (o único programa que falha no `spirv-val`). Todos logam uma vez com `[shader]`.
 5. **Escala de resolução > 1x**: travada em 1x (`texture_cache.cpp res_scale_allowed`). Em 2x a composição cobre
    só o quadrante superior esquerdo. Diagnóstico provável, não confirmado: passes (compute, ou fetches a partir de
-   `gl_FragCoord`) que endereçam alvos escalados em texels do guest. O caminho é o do escalonador do Ryujinx:
-   `gl_FragCoord` no espaço do guest e compute escalado. O `TLDS` já escala as coordenadas das texturas marcadas
-   (`PushConstants::scaled_textures`). Confirmar primeiro com `HWDER_VK_FRAME_DUMP` em 2x
+   `gl_FragCoord`) que endereçam alvos escalados em texels do guest. Confirmar com `HWDER_VK_FRAME_DUMP` em 2x
    (`HWDER_ALLOW_RES_SCALE=1`).
-6. **Ganchos do jogo** (`HW_GAME_HOOKS=OFF`): 120 fps, ultrawide e LOD do HWDE dependem de símbolos. Achar as
-   funções equivalentes do KTGL no FEW (`tools/recomp/games/hwde/symbols.txt` como guia; `remap_symbols.py`
-   compara corpos de função) e só então religar.
-7. **Nomes do save**: o jogo grava `system` em `save/0100F15003E64000/<usuário>/`; os do progresso ainda não foram
-   vistos. Ajustar `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
-8. **Steam Deck: medição**: montar a medição como a do HWDER (fora deste repositório): fps, watts e TDP por partida.
-
-
+6. **Engasgos de compilação** (seção "Engasgos") e o 120 fps do HWDE (`HW_GAME_HOOKS`: achar no FEW as funções
+   equivalentes do quadro do KTGL; os ganchos novos mostram o caminho com `gxref.py`).
+7. **Nomes do save**: o jogo grava `system` e `scenario0` em `save/0100F15003E64000/<usuário>/`. Ajustar
+   `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
+8. **Steam Deck: medição** como a do HWDER (fora deste repositório).
 
 ## Armadilhas já encontradas
 
@@ -266,3 +367,11 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   `Resolve-Path`. Rebaseie o branch sobre o `main` antes de testar.
 - `gerar-few.ps1` publica o build da árvore atual, seja qual for o branch: anote qual branch está em
   `Jogar no PC`.
+- O `battle_long.txt` é cego ao estado do jogo: quando o jogo fica mais rápido, os toques de menu e a cutscene mudam
+  de lugar no tempo (a cutscene em tempo real já caiu em 40–60 s e em 120–140 s em execuções diferentes) e um toque
+  chegou a abrir a eShop. Compare execuções pelo conteúdo (capturas), não só pelo relógio. A luta densa de verdade
+  é o trecho 165–230 s.
+- `HWDER_GPU_TIMING` e `HWDER_THREAD_STATS` (profiler por fase) custam caro: não meça fps com eles ligados.
+- `wsl.exe -- bash -c '...'` passa pela shell padrão e perde aspas e variáveis: escreva um script e rode
+  `wsl -d archlinux -u root -- bash /mnt/c/.../script.sh` (com `MSYS_NO_PATHCONV=1` no Git Bash).
+- O ExeFS desempacotado fica em `data/update/exefs` (o `tools/gaddr.py` antigo ainda aponta para `data/exefs`).
