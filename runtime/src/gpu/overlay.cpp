@@ -620,6 +620,13 @@ static void tab_graphics(bool& changed) {
          "and the softening from FXAA. The HUD is not affected.");
     if (ImGui::Checkbox("Keep props in big battles", &v.keep_crowd_props)) changed = true;
     help("Recommended: on. Stops fences, rubble and other small scenery from vanishing during big fights.");
+    if (ImGui::Checkbox("60 fps battles (the game's Performance mode)", &v.battle_60fps)) changed = true;
+    help("On: the game runs in its own Performance display mode, 60 fps in battle (menus are 60 either way).\n"
+         "Off: Quality mode, 30 fps battles and slightly longer character draw distance. Takes effect the next\n"
+         "time the game sets its display mode (at launch).");
+    if (ImGui::Checkbox("1080p at 60 fps", &v.full_res_60)) changed = true;
+    help("With 60 fps battles: render the 3D at the Quality mode's 1920x1080 instead of the Performance mode's\n"
+         "1280x720. Turn off on weaker GPUs. Takes effect at launch.");
 
     section("Shaders");
     settings::Debug& d = settings::debug();

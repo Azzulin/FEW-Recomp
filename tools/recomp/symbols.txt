@@ -9,5 +9,18 @@
 # f_<addr>_orig and the runtime defines f_<addr> (see runtime/src/game/hook.h). A data symbol only
 # gets HW_ADDR_<Name>. Addresses are guest addresses (main at 0x1000000000). Names are ours, inferred.
 #
-# Empty for now. Hyrule Warriors' list (same KTGL engine, a generation earlier) is kept for reference in
-# games/hwde/symbols.txt; its addresses do not apply here.
+# Hyrule Warriors' list (same KTGL engine, a generation earlier) is kept for reference in games/hwde/symbols.txt;
+# its addresses do not apply here.
+
+# ---- display modes and frame rate (docs/few.md "Modos de exibição"; runtime/src/game/few_display_mode.cpp)
+0x10008b7f1c  Display_SetMode             func hook   # (sys, mode 0..5): sys+0x9cb4, config id at sys+0x44; runtime/src/game/few_display_mode.cpp
+0x10008b7f78  Display_GetSize             func        # (sys, &w, &h): 1920x1080 for modes 0,1,3,4; 1280x720 for 2,5
+0x10008b7fc0  Display_GetPresentInterval  func        # (sys): 1 for modes 1,4; else 2 once the scene has content (battle), 1 in menus
+0x10008b8074  Display_IsQualityMode       func        # (sys): 1 for modes 0,2,3,5 (dynamic resolution thresholds)
+0x10008cb098  Display_Apply               func        # (ctx, w, h, interval, force, ..): output size and GfxDevice_SetPresentInterval
+0x10008ca0ec  DynRes_Update               func hook   # (config id, quality, gpu time) -> config id one step up/down in the mode's group; runtime/src/game/few_display_mode.cpp
+0x100000a1b8  Display_ModelDrawDistance   func        # 1500 in mode 1, else 2000 (character draw distance)
+0x1000b04294  GfxDevice_SetPresentInterval func       # (dev, n): dev+0x2adc, read by the present below
+0x1000bfd870  GfxWindow_Present           func        # (queue, window, interval): nvnWindowSetPresentInterval when it changed, acquire, present
+0x10012bbccc  g_PresentInterval           data        # u32, written every frame from Display_GetPresentInterval
+0x10012bbcc4  g_FrameRate                 data        # f32 60 / interval, written every frame (the logic's frame rate)
