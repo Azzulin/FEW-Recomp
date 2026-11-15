@@ -338,9 +338,40 @@ Antes (laço+`switch`): ~3,5 fps (270 ms). O tradutor estruturado deu ~3x, mas a
 quanto cada despacho dos três shaders grandes custa agora (era ~0,7 ms com um grupo só), e as estatísticas do RADV
 (drm-shim) para saber se ainda há despejo em scratch. Enquanto isso, `HWDER_GMEM=0` volta aos 30 fps sem partículas.
 
+### Por que a batalha pesa no Deck (2026-11-15)
+
+Medido no Deck com `HWDER_GPU_TIMING=5`, `HWDER_GPU_TIMING_DRAWS=1` (novo: tempo por draw, por par de shaders) e
+`HWDER_TIMELINE`, comparando com o PC:
+
+- **Não são os shaders de cálculo das partículas**: com o tradutor estruturado, ~700 despachos custam ~15 ms por
+  quadro (0,02 ms cada; grupo único de 64). O RADV (drm-shim) compila os três grandes sem nenhum despejo (VGPRs
+  32–80, scratch 0).
+- **Um draw de tela cheia** (`vs 51e397089218a4aa`, `fs e789f3db3ec877a2`, iluminação por tiles: lê do tile a
+  contagem de luzes e percorre a lista com `TLDS`) levava **13,5 ms no Deck e 0,98 ms no PC** (14×; o hardware
+  explica ~4×). O shader em si compila bem no ACO (1106 instruções, 80 VGPRs, sem despejo): o laço dava mais voltas.
+- **Causa**: o tradutor supunha warps de 32 lanes e a AMD roda waves de 64. `SR_LANEID`, as máscaras `SR_*MASK`,
+  `VOTE` (só a componente 0 da votação) e `SHFL` erravam na segunda metade da wave, e os atômicos agregados por warp
+  do NVN (contagem por `popc(vote)`, vaga por `popc(vote & LTMASK)`) montavam listas erradas. Corrigido em
+  `72ed05f`: as operações de warp agem dentro da metade de 32 lanes (`warp_lane`, `warp_ballot` em `program.cpp`).
+  Na NVIDIA nada muda (medido: luta densa 52–55 fps, igual). **Falta medir no Deck** (o SSH parou de responder no
+  meio da sessão).
+- DCC: as imagens de cor eram `MUTABLE_FORMAT` sem lista de formatos, o que no RADV (GFX10.3) desliga a compressão.
+  Agora levam o par sRGB/UNORM (`1389a87`); no Deck a passada pesada mudou pouco (18,8 → 18,2 ms), mas é o uso
+  certo da API. Única reinterpretação vista na batalha inteira: RGBA8 UNORM lido como sRGB.
+- **CPU e GPU em série**: o jogo entrega o quadro inteiro de uma vez (3 entradas do GPFIFO), a thread de comandos
+  grava ~13,5 ms com a GPU parada e só então envia (1 envio por quadro); o jogo espera os syncpoints do quadro
+  anterior para entregar o próximo. Enviar em pedaços durante a gravação deve recuperar boa parte desses 13,5 ms
+  (cuidado: cada envio leva as cópias de volta da memória global).
+- As barras brancas em pilares e arcos (capturas `dcc_*`, `nofl_*`) existem com e sem a lista de formatos: problema
+  antigo, ainda não investigado.
+
 ## Pendências, por prioridade
 
-1. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em
+1. **Medir no Deck a correção de warp** (`72ed05f`, build `few` já enviado): `DECK_FRESH=1 DECK_PACE=1
+   DECK_INPUT=tools/input/battle_long.txt DECK_ENV="HWDER_GPU_TIMING=5" bash tools/deck/testar-no-deck.sh 230` e
+   comparar o draw `e789f3db` (13,5 ms antes) e a luta densa (10–11 fps antes). Depois: envio em pedaços (seção
+   acima).
+1b. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em
    `Envio Deck\FireEmblemWarriors`: `few-steam.sh` sem o `HWDER_GMEM=0` (as partículas voltam) e, como o envio
    mantém o `.ini` do Deck, o lançador e o `testar-no-deck.sh` acrescentam `fps60=0` e `fps60_1080p=0` quando
    `fps60` falta (30 fps no modo Qualidade; a cena renderiza a 1920×1080, id de configuração 0).
