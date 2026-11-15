@@ -415,6 +415,10 @@ void waiter_thread() {
             f = g_s.in_flight.front();
         }
         wait_serial(f->serial);
+        static const double slow_ms = debug::value(debug::GpuSlowMs, 0.0);
+        static const u64 slow_from = host::ticks_ms() + (u64)(debug::value(debug::GpuSlowAfter, 0.0) * 1000);
+        if (slow_ms > 0 && host::ticks_ms() >= slow_from)
+            std::this_thread::sleep_for(std::chrono::microseconds((long long)(slow_ms * 1000)));
         host::timeline("vk fence", f->serial, f->deferred.size());
         gputime::frame_done(f);
         u64 v = 0;

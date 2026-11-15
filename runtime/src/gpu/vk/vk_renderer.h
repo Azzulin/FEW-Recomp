@@ -68,6 +68,8 @@ struct Sched {
     VkSemaphore timeline = VK_NULL_HANDLE;
     std::atomic<u64> completed{0};
     u64 submitted = 0;
+    // HWDER_FRAME_OVERLAP: `submitted` at the last two distinct fence points (VkRenderer::on_gpu_idle).
+    u64 idle_mark_cur = 0, idle_mark_prev = 0;
     Buffer ring;
     u64 ring_head = 0;
     u64 seg_serial[kRingSegments] = {};
@@ -523,8 +525,21 @@ public:
     void on_gpu_idle(std::function<void()> fn) override {
         {
             std::lock_guard<std::mutex> l(g_s.m);
-            if (!g_s.idle.empty() || g_s.completed < g_s.submitted) {
-                g_s.idle.emplace_back(g_s.submitted, std::move(fn));
+            // The game waits for these (its frame's syncpoints) before it submits the next frame, so waiting for
+            // the frame's own GPU work runs CPU and GPU in series. With HWDER_FRAME_OVERLAP they wait for the work
+            // up to the previous fence point instead: the frame is recorded and submitted, the one before it is
+            // finished, and the game prepares the next one while the GPU renders this one (one frame in flight).
+            static const bool overlap = debug::flag(debug::FrameOverlap);
+            u64 threshold = g_s.submitted;
+            if (overlap) {
+                if (g_s.idle_mark_cur != g_s.submitted) {
+                    g_s.idle_mark_prev = g_s.idle_mark_cur;
+                    g_s.idle_mark_cur = g_s.submitted;
+                }
+                threshold = g_s.idle_mark_prev;
+            }
+            if (!g_s.idle.empty() || g_s.completed < threshold) {
+                g_s.idle.emplace_back(threshold, std::move(fn));
                 return;
             }
         }

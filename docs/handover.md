@@ -3,39 +3,48 @@
 Atualizado em 2026-11-15. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
 atualize ao terminar uma sessão.
 
-## Retomar aqui (2026-11-15)
+## Retomar aqui (2026-11-15, tarde)
 
 Objetivo do dono: batalha a 30 fps **estáveis no Steam Deck com as partículas ligadas** ("não quero comprometer o
-jogo pela estabilidade"). Nada de desligar efeito (`HWDER_GMEM=0` não é solução). Estado: a luta densa no Deck
-estava em ~11 fps; três correções novas (seção "Sessão de 2026-11-15") estão commitadas, compiladas e **já
-copiadas para o Deck, mas não medidas lá** (o aparelho estava com outro jogo aberto no fim da sessão).
+jogo pela estabilidade"). Nada de desligar efeito (`HWDER_GMEM=0` não é solução).
+
+Estado, medido no Deck com o build que está no cartão (commit `3b4e15d`): a luta densa do `battle_long.txt` saiu
+de ~11 fps para **26–28 fps na maior parte do trecho** (mediana de 33,3 ms: quadros a 30 fps com alguns a 20) e
+**~19–20 fps na janela mais pesada** (cerca de 650 despachos de compute por quadro). Detalhes na seção "Sessão de
+2026-11-15".
+
+O que falta para os 30 fps estáveis é **a CPU e a GPU trabalharem ao mesmo tempo**. Hoje, por quadro e em série:
+jogo ~5–6 ms → gravação ~9–11 ms → GPU 10–31 ms → cópia de volta ~4 ms. Na janela pesada a GPU sozinha leva
+~31 ms, então qualquer coisa em série passa de 33 ms.
 
 Passo a passo:
 
 1. **Deck livre**: ligado, no Modo Jogo, sem jogo aberto (o teste se recusa a rodar com um jogo aberto). Conferir
-   o SSH: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> uptime`.
-2. **Conferir que o `few` do Deck é o desta sessão**: se o PC tiver código mais novo, regerar com
-   `.\gerar-deck.ps1` e enviar com `ARQUIVOS="few few-steam.sh LEIA-ME.txt" bash tools/deck/enviar-para-deck.sh`
-   (o envio confere o SHA-256).
+   o SSH: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> uptime`. O Deck suspende sozinho e some da rede.
+2. **Build do Deck**: `.\gerar-deck.ps1` (incremental, ~3 min) e
+   `ARQUIVOS="few" bash tools/deck/enviar-para-deck.sh` (o envio confere o SHA-256).
 3. **Medir a batalha** (~5 min; save vazio até o prólogo e luta longa):
    `DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230`.
-   Olhar a tabela "ritmo de quadros": as janelas de 165 a 230 s são a luta densa. Referência antes das correções:
-   10–11 fps (1080p) e 11–12 fps (720p).
-4. **A/B do encadeamento de despachos**: o mesmo comando com `DECK_ENV="HWDER_DISPATCH_SERIAL=1"` diz quanto o
-   encadeamento rende sozinho. As lutas não são idênticas entre execuções (a quantidade de inimigos varia):
-   comparar mediana e p95 das janelas densas, de preferência com duas execuções de cada.
-5. **Onde está o tempo agora**: `DECK_ENV="HWDER_TIMELINE=195"` grava uma linha do tempo de 0,5 s em
-   `<pasta do Deck>/hwder.log.timeline.txt`. Ler como na seção "Sessão de 2026-11-15": de `gpfifo` a `gpu idle` é
-   a gravação; de `gpu idle` a `comp fence done` é a GPU. `DECK_ENV="HWDER_GPU_TIMING=5"` dá o tempo de GPU por
-   passe (com ele ligado o fps cai: não use para medir fps).
-6. **Conforme o resultado**:
-   - GPU ainda acima de 33 ms: ver as maiores linhas `gpu-time` (passe `e789f3db` de iluminação, ~7,8 ms a 720p;
-     `other`, ~11 ms; despachos) e atacar a maior.
-   - Gravação na CPU (~14 ms com a GPU parada) pesando: **envio em pedaços** (submeter o command buffer no meio da
-     gravação para a GPU começar antes; cuidado com as cópias de volta de `gmem`, que hoje vão uma vez por command
-     buffer em `gmem_record_copybacks`).
-   - 30 fps estáveis: atualizar a tabela do Deck neste arquivo e o `LEIA-ME.txt` (`gerar-deck.ps1`).
-7. **Fechar a sessão**: commitar e atualizar este arquivo (estado, medidas, pendências).
+   As janelas de 145 a 230 s são a luta densa. As lutas variam entre execuções: rodar duas vezes e olhar a
+   pior janela. Referências em `build/deck_pace_*.log`.
+4. **Sobreposição de quadros** (`HWDER_FRAME_OVERLAP=1`, experimental, desligada por padrão): o jogo só entrega o
+   quadro N+1 depois que os syncpoints do quadro N disparam, e o runtime só os dispara quando a GPU termina o
+   quadro N (`on_gpu_idle`). Com a opção, eles disparam quando o quadro N está gravado e enviado e o trabalho até
+   o ponto de sincronização anterior terminou: a GPU desenha N enquanto o jogo e a thread de comandos preparam
+   N+1. No PC com GPU lenta simulada (`HWDER_GPU_SLOW_MS=30;HWDER_GPU_SLOW_AFTER=120`): 12,6 fps em série contra
+   mediana de 33 ms com a opção. **Dois problemas em aberto antes de ligar**:
+   - a cópia de volta de `gmem` deixa de rodar: `gmem_bind` pula a cópia de um command buffer quando outro, mais
+     novo, já escreveu o buffer (`pending != serial`), e com sobreposição sempre há um mais novo. A memória do
+     guest para de receber os dados das partículas (os vértices delas saem dessa memória). Plano: uma cópia de
+     volta por command buffer com `readback` próprio (2–3 por buffer), espelho em memória da CPU, fusão em três
+     vias por palavra (o que o guest escreveu e ainda não subiu não é sobrescrito) e upload das diferenças mesmo
+     com escrita pendente;
+   - travadas periódicas de ~300 ms (`display: slow frame`), ainda sem causa: capturar uma com
+     `HWDER_TIMELINE=<s>` (eventos novos: `sync wait`, `cv wait`, `addr wait`, `woke`, `ev wait`, `vk fence`,
+     `vk deferred`).
+5. **Depois**: tempo de GPU na janela pesada (`DECK_ENV="HWDER_GPU_TIMING=5"`): passe de iluminação `e789f3db`
+   (~7,7 ms), "other" (~6 ms, inclui a cópia de volta de ~30 MB na GPU), `a3e216c7` (~3,4 ms).
+6. **Fechar a sessão**: commitar e atualizar este arquivo (estado, medidas, pendências).
 
 ## Estado
 
@@ -62,9 +71,9 @@ padrão 720p, que é também o do próprio modo Desempenho do jogo.
 
 O travamento da batalha da terceira rodada segue resolvido.
 
-**Steam Deck**: o cartão SD tem o build de 2026-11-15 (partículas ligadas, 30 fps a 720p, uploads de `gmem` só do
-que mudou, despachos encadeados), ainda não medido; o anterior fazia ~11 fps na luta densa (seção "Retomar
-aqui"). **No Deck o padrão é 30 fps**
+**Steam Deck**: o cartão SD tem o build de 2026-11-15 à tarde (`3b4e15d`: partículas ligadas, 30 fps a 720p,
+despachos encadeados, cópias de `gmem` só do que mudou, `memcmp` vetorizado). Luta densa: 26–28 fps na maior parte
+e ~19–20 fps na janela mais pesada; antes, ~11 fps (seção "Retomar aqui"). **No Deck o padrão é 30 fps**
 (`fps60=0`, modo Qualidade): decisão do dono, porque no FEW 30 fps é o ritmo nativo da batalha no Switch (a lógica
 segue `g_FrameRate`), ao contrário do HWDE; 60 fps fica como opção no menu.
 
@@ -88,6 +97,7 @@ segue `g_FrameRate`), ao contrário do HWDE; 60 fps fica como opção no menu.
 | Validar todos os shaders (WSL) | rodar com `HWDER_DUMP_SHADERS=1`, depois `wsl -d archlinux -u root -- bash "/mnt/c/…/tools/shadertest/wsl_validate.sh"` |
 | Engenharia reversa do `main` | `wsl -d archlinux -u root -- python3 "/mnt/c/…/tools/gxref.py" callers 0x…` (ver o cabeçalho) |
 | Modo 30 fps (Qualidade) / 720p | `-Ini "fps60=0"` / `-Ini "fps60_1080p=0"`; 30 fps a 720p: `-Ini "fps30_720p=1"` |
+| GPU lenta simulada (ritmo do Deck no PC) | `-Env "HWDER_GPU_SLOW_MS=30;HWDER_GPU_SLOW_AFTER=120"`: segura cada command buffer terminado 30 ms, a partir de 120 s |
 | Um quadro de despachos de compute | `-Env "HWDER_DISPATCH_TRACE=<s>"`: linhas `dtrace:` (programa, grade, faixas lidas/escritas, uploads) |
 
 Testes rodam em `build\run` (save, ajustes e caches próprios), nunca em `Jogar no PC`, que é do jogador.
@@ -432,8 +442,41 @@ Três correções, todas sem tirar efeito:
    `HWDER_DISPATCH_SERIAL=1` volta à barreira após cada despacho (A/B).
 
 No PC (RTX 3050, 1080p, modo 30 fps) a imagem da batalha sai correta com as três. O fps no PC não serviu de A/B: as
-duas execuções tiveram lutas diferentes (53 contra 119 KO no mesmo instante). **Falta medir no Deck** (seção
-"Retomar aqui").
+duas execuções tiveram lutas diferentes (53 contra 119 KO no mesmo instante).
+
+### Medições no Deck (tarde)
+
+Luta densa do `battle_long.txt` (janelas de 20 s entre 145 e 230 s), 30 fps a 720p:
+
+| Build | fps | Mediana por quadro |
+|---|---|---|
+| Antes (720p) | ~11,5 | ~87 ms |
+| Despachos em série (`HWDER_DISPATCH_SERIAL=1`) | 11–12 | ~88 ms |
+| Despachos encadeados | 14–18 | 59–73 ms |
+| + `memcmp` vetorizado e cópia de volta só do que mudou (`3b4e15d`) | 26–28; pior janela 19–20 | 33,3 ms; pior janela ~56 ms |
+
+- **O encadeamento rende**: o tempo de GPU do quadro caiu de ~60 para ~31 ms (`HWDER_GPU_TIMING`: passes 23,4 ms,
+  fora de passes 7,9 ms). Os uploads só do que mudou, sozinhos, não apareceram no fps do Deck.
+- **`memcmp` de um byte por vez** (`runtime/src/host/memcmp_x86.cpp`): o toolchain Zig liga no executável o
+  compiler-rt dele, que traz `memcmp` e `bcmp` fracos, e uma definição no executável vence a da glibc. As duas
+  comparam um byte por iteração. O amostrador (`HWDER_SAMPLE_US=500`) mostrou **~35% da thread de comandos** nesse
+  laço: geometria, espelho de `gmem`, chaves de cache. As definições novas (AVX2, 32 bytes por passo, ocultas, só
+  no Linux) foram testadas contra uma referência byte a byte em 3 milhões de casos. No relatório do amostrador os
+  endereços são deslocamentos no arquivo: somar 0x1000000 para achar o símbolo com `nm`/`addr2line` no `few` do
+  WSL (`/root/few/build-deck/few`). O `memcpy` do compiler-rt é SSE de 16 bytes e ficou como está.
+- **Cópia de volta só das páginas que mudaram** (`gmem_bind`, no `defer`): dos ~30–33 MB que os shaders de
+  partículas reescrevem por quadro, **~120–130 KiB mudam**. Escrever tudo sujava o write watch do buffer inteiro e
+  fazia o bind seguinte comparar o buffer todo. A thread de espera leva ~4 ms nessa comparação (eram ~10,6 ms com
+  o `memcmp` lento).
+- Linha do tempo (`HWDER_TIMELINE`) com o build `3b4e15d`, quadro de 33 ms: jogo ~6 ms, gravação ~9–11 ms (eram
+  ~18), GPU ~10 ms nesse instante, cópia de volta ~4 ms. `gpu thread busy` caiu de ~21 para ~9 ms por quadro.
+- **Por que em série**: o jogo espera os syncpoints do quadro (7 incrementos por quadro) antes de entregar o
+  seguinte, e o runtime só os incrementa com a GPU ociosa (`gpu.cpp`, `renderer()->on_gpu_idle`). É o desenho do
+  próprio jogo: no Switch também é CPU e depois GPU.
+
+Ferramentas novas: `HWDER_GPU_SLOW_MS=<ms>` (+ `HWDER_GPU_SLOW_AFTER=<s>`) segura cada command buffer terminado,
+como se a GPU fosse mais lenta: reproduz no PC o ritmo do Deck; `HWDER_FRAME_OVERLAP=1` (experimental, seção
+"Retomar aqui"); eventos de espera do guest e da thread de espera na linha do tempo.
 
 Ferramenta nova: `HWDER_DISPATCH_TRACE=<s>` loga um quadro inteiro de despachos e de uploads de `gmem` (linhas
 `dtrace:`), a partir de <s> segundos depois do primeiro despacho. Cada despacho mostra programa, grade, faixas de
@@ -442,21 +485,19 @@ linhas, procurando sobreposição de faixas `w`/`r`.
 
 ## Pendências, por prioridade
 
-1. **Batalha densa a 30 fps no Deck com as partículas** (o objetivo do dono): medir as correções de 2026-11-15
-   seguindo "Retomar aqui". Candidatos seguintes, nesta ordem:
-   - envio em pedaços, para sobrepor os ~14 ms de gravação com a GPU;
-   - o passe de iluminação `e789f3db` (~7,8 ms a 720p no Deck, contra ~1 ms a 1080p no PC);
-   - o "other" (~11 ms, ~750 segmentos por quadro).
+1. **Batalha densa a 30 fps no Deck com as partículas** (o objetivo do dono): falta a janela mais pesada
+   (~19–20 fps). Nesta ordem:
+   - sobreposição de quadros (`HWDER_FRAME_OVERLAP`): refazer a cópia de volta de `gmem` e achar as travadas de
+     ~300 ms (seção "Retomar aqui", passo 4);
+   - tempo de GPU: passe de iluminação `e789f3db` (~7,7 ms a 720p no Deck, contra ~1 ms a 1080p no PC), "other"
+     (~6 ms), `a3e216c7` (~3,4 ms).
 
    Para os shaders: estatísticas do RADV pelo drm-shim (`tools/shadertest/radv_stats.cpp`, que agora aceita o par
    `vs.spv+fs.spv`).
-2. **Custo por despacho na CPU**:
-   - `written_since` chama `GetWriteWatch` por bind;
-   - `do_dispatch` monta `GuestEnv` com `std::function` e lê o QMD a cada despacho;
-   - a comparação com o espelho de `gmem` lê ~31 MB por quadro. É barata perto do upload que substituiu, mas
-     aparece no perfil.
-
-   Medir com `HWDER_SAMPLE_US=1000` + `symbolize_samples.py` no trecho 165–230 s.
+2. **Custo por despacho na CPU** (gravação ~9–11 ms por quadro no Deck): `do_dispatch` monta `GuestEnv` com
+   `std::function` e lê o QMD a cada despacho; `bind_resources`, `AddressSpace::translate` e `hash_program` são os
+   seguintes no amostrador. Medir com `DECK_ENV="HWDER_SAMPLE_US=500"` (relatório em
+   `<pasta do Deck>/hwder.log.samples.txt`).
 3. **Draw indireto na GPU** (substitui a leitura atrasada dos argumentos): macro 25 com parâmetros vindos de memória
    pendente vira `vkCmdDrawIndexedIndirect` lendo o buffer de `gmem` (quads viram índices de um buffer fixo; um
    despacho pequeno converte `{contagem, instâncias, primeiro, instância base}` no comando indexado). Exige também

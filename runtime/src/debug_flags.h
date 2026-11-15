@@ -37,6 +37,7 @@ enum Id {
     FilmstripW,  // HWDER_FILMSTRIP_W
     ForceInterval1,  // HWDER_FORCE_INTERVAL1
     Fps,  // HWDER_FPS
+    FrameOverlap,  // HWDER_FRAME_OVERLAP
     FsSelftest,  // HWDER_FS_SELFTEST
     FsTrace,  // HWDER_FS_TRACE
     GameInterp,  // HWDER_GAME_INTERP
@@ -46,6 +47,8 @@ enum Id {
     GiNoObjects,  // HWDER_GI_NO_OBJECTS
     GiObjSync,  // HWDER_GI_OBJ_SYNC
     GiObjTrace,  // HWDER_GI_OBJ_TRACE
+    GpuSlowAfter,  // HWDER_GPU_SLOW_AFTER
+    GpuSlowMs,  // HWDER_GPU_SLOW_MS
     GpuTiming,  // HWDER_GPU_TIMING
     GpuTimingDraws,  // HWDER_GPU_TIMING_DRAWS
     GpuTrace,  // HWDER_GPU_TRACE

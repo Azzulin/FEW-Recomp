@@ -583,6 +583,7 @@ public:
         }
         if (slot >= kMaxEvents) return BadParameter;
         if (timeout == 0) return Timeout;
+        host::timeline("ev wait", id, thresh);
         CtrlEvent& ev = g_events[slot];
         if (!ev.event) ev.event = ipc::make_event();
         ev.registered = true;

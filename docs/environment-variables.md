@@ -30,6 +30,8 @@ current values. Kinds:
 | `HWDER_AUTOPLAY_X` | presence | off | Autoplay: press X once, 1 s into the battle (the heavy-fight save: starts the special mode). |
 | `HWDER_CACHE_PROFILE` | presence | off | Pipeline cache / warmup save: log retrieval, snapshot, validation, serialization and disk timings (cache-save:). Read on every save. |
 | `HWDER_CACHE_SAVE_SYNC` | string | unset | Exactly "1": save the warmup records synchronously instead of on the background task. |
+| `HWDER_DISPATCH_SERIAL` | presence | off | Renderer: a barrier after every compute launch, as before launch chaining (A/B tests; vk_draw.cpp do_dispatch). |
+| `HWDER_DISPATCH_TRACE` | number | unset | Renderer: from that many seconds after the first compute launch, log one frame of launches (program, grid, storage buffer ranges, images) and storage buffer uploads (dtrace:). |
 | `HWDER_DRAWLOG` | presence | off | With HWDER_FILMSTRIP: one line per draw into <filmstrip dir>/drawlog.txt while the capture window is open. |
 | `HWDER_DUMP_AFTER` | number | unset | HWDER_DUMP_FRAMES: no dumps (and no dump stalls) before that many seconds. |
 | `HWDER_DUMP_EVERY` | integer | unset | HWDER_DUMP_FRAMES: dump every n-th presented frame (each dump waits for the GPU). |
@@ -43,6 +45,7 @@ current values. Kinds:
 | `HWDER_FILMSTRIP_W` | integer | unset | Filmstrip: thumbnail width (16:9, at least 16). |
 | `HWDER_FORCE_INTERVAL1` | presence | off | Presenter: release every frame on the 60 Hz grid even when the game asks for swap interval 2 (experiment). |
 | `HWDER_FPS` | number | unset | Presenter release rate for experiments; ignored by the 120 fps mode's per-frame rates. |
+| `HWDER_FRAME_OVERLAP` | presence | off | Renderer: run a frame's syncpoint increments and reports once the GPU finished the work up to the previous fence point instead of the frame's own, so the game prepares the next frame while the GPU renders this one (A/B tests). |
 | `HWDER_FS_SELFTEST` | nonzero | off | RomFS: run the image self test after mounting. |
 | `HWDER_FS_TRACE` | nonzero | off | File system service trace. |
 | `HWDER_GAME_INTERP` | integer | unset | 0/1: override the 120 fps (game-drawn in-between frame) setting for tests. |
@@ -52,7 +55,10 @@ current values. Kinds:
 | `HWDER_GI_NO_OBJECTS` | presence | off | 120 fps mode: interpolate the camera only, no object/bone blending (comparison). |
 | `HWDER_GI_OBJ_SYNC` | presence | off | 120 fps mode: blend objects on the GPU command thread instead of their own thread (comparison). |
 | `HWDER_GI_OBJ_TRACE` | presence | off | 120 fps mode: once a second, trace the c3 blocks nearest the player and the other vertex cbufs with transforms. |
+| `HWDER_GPU_SLOW_AFTER` | number | unset | With HWDER_GPU_SLOW_MS: start that many seconds after the renderer does (menus and loading at full speed, then a slow GPU in the battle). |
+| `HWDER_GPU_SLOW_MS` | number | unset | Renderer: hold every finished command buffer that many ms before retiring it, as if the GPU were that much slower (reproduces a slow GPU's frame pacing, e.g. the Steam Deck's, on a fast one). |
 | `HWDER_GPU_TIMING` | number | unset | Renderer: GPU timestamps around every rendering instance; every that many seconds log the GPU time per frame, the idle time between submissions and the costliest passes (gpu-time:). Adds a timestamp per pass. |
+| `HWDER_GPU_TIMING_DRAWS` | presence | off | With HWDER_GPU_TIMING: a timestamp around every draw, grouped by vertex+fragment shader (finds the costly draws inside a pass; costs much more). |
 | `HWDER_GPU_TRACE` | string | unset | GPU command trace; "2": raw 3D method stream (first 200000); "3": host methods, class binds and submissions. |
 | `HWDER_GUEST_LIBC` | presence | off | Run the game's own (translated) memcpy/memmove/memset/bzero/strlen instead of the host C library's. |
 | `HWDER_HOLD` | presence | off | On a fatal error keep the window up showing the reason instead of exiting. |
@@ -67,6 +73,7 @@ current values. Kinds:
 | `HWDER_MODS` | string | unset | Mods folder to use instead of the one in the settings or the default (read as a path; see fs/mods.h). |
 | `HWDER_MUTE` | presence | off | No audio output; also: no message boxes, and with HWDER_OFFSCREEN marks an automated run. |
 | `HWDER_NO_FAST_CLEAR` | presence | off | Renderer: clear whole colour targets with vkCmdClearAttachments instead of a load-op fast clear (always on for Intel GPUs, whose driver crashed in it, issue #6). |
+| `HWDER_NO_FORMAT_LIST` | presence | off | Renderer: create colour images mutable to any format (no VkImageFormatListCreateInfo), as before; AMD then keeps them uncompressed (no DCC). |
 | `HWDER_NO_MODS` | nonzero | off | Load no mods from the mods folder (the game RomFS is passed through untouched). |
 | `HWDER_NO_PRELAUNCH` | presence | off | Skip the startup screen. |
 | `HWDER_NSP` | presence | off | Game NSP path (read as a wide string by the loader; the startup screen only notes that it is set). |

@@ -1,4 +1,5 @@
 // Kernel core: lock, handle table, threads, and the waiting primitives used by SVCs.
+#include "host/sampler.h"
 #include "kernel.h"
 
 #include "host/platform.h"
@@ -134,6 +135,7 @@ bool park_current_thread(s64 timeout_ns) {
         perf::WaitScope ws(perf::kWaitKernel);
         signaled = host::event_wait(t->wake_event, timeout_ns);
     }
+    host::timeline("woke");
     g_kernel_lock.reacquire(depth);
     t->waiting = false;
     return signaled;
@@ -227,6 +229,7 @@ Result wait_process_wide_key(u64 mutex_addr, u64 key, Handle self, s64 timeout_n
             left = timeout_ns - elapsed;
             if (left <= 0) break;
         }
+        host::timeline("cv wait", key);
         park_current_thread(left);
     }
     // Timed out: if still waiting on the condvar, leave it; if already queued on the mutex, leave that.
@@ -297,6 +300,7 @@ Result wait_for_address(u64 addr, u32 type, s32 value, s64 timeout_ns) {
     AddrWaiter w{current_thread()};
     auto it = g_addr_waiters.insert({addr, &w});
     while (!w.signaled) {
+        host::timeline("addr wait", addr);
         if (!park_current_thread(timeout_ns) && timeout_ns >= 0 && !w.signaled) {
             g_addr_waiters.erase(it);
             return ResultTimedOut;
@@ -396,6 +400,7 @@ static Result wait_synchronization_impl(const Handle* handles, s32 count, s64 ti
             if (left <= 0) return ResultTimedOut;
         }
         for (auto& o : objs) o->waiters.push_back(self);
+        host::timeline("sync wait", (unsigned long long)count, handles[0]);
         park_current_thread(left);
         for (auto& o : objs) {
             auto& w = o->waiters;
