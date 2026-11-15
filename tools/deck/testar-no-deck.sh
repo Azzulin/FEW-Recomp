@@ -32,7 +32,9 @@ fi
 EXTRA_ENV=${DECK_ENV:-}
 [ -n "${DECK_PACE:-}" ] && EXTRA_ENV="$EXTRA_ENV HWDER_PACE_TRACE=1"
 
-ssh_deck bash -s -- "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" "$INPUT_REMOTE" "${DECK_FRESH:-}" "$EXTRA_ENV" <<'EOF'
+# O ssh junta os argumentos numa linha que a shell do Deck separa de novo: cada um vai citado (%q), senão um
+# DECK_ENV com espaços vira vários argumentos e só a primeira variável chega ao jogo.
+ssh_deck "bash -s -- $(printf '%q ' "$DEST" "$SECS" "${DECK_DISPLAY:-:1}" "$INPUT_REMOTE" "${DECK_FRESH:-}" "$EXTRA_ENV")" <<'EOF'
 set -u
 DEST=$1 SECS=$2 DISP=$3 INPUT=$4 FRESH=$5 EXTRA=$6
 cd "$DEST" || exit 1
@@ -42,6 +44,7 @@ fi
 [ -x few ] || chmod +x few
 # Como no few-steam.sh: um .ini de build antigo não tem fps60, e no Deck o padrão é 30 fps (modo Qualidade).
 if [ -f hwder_settings.ini ] && ! grep -q '^fps60=' hwder_settings.ini; then
+    [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # o .ini pode terminar sem quebra de linha
     printf 'fps60=0\nfps60_1080p=0\n' >> hwder_settings.ini
 fi
 echo "== $(sha256sum few | cut -c1-16)…  few, teste de $SECS s em DISPLAY=$DISP${INPUT:+, roteiro $INPUT}${FRESH:+, save vazio}"
@@ -73,6 +76,7 @@ if [ -n "${DECK_PACE:-}" ]; then
     mkdir -p "$ROOT/build"
     ssh_deck -n "grep 'pace: present' '$DEST/hwder.log'" > "$ROOT/build/deck_pace.log" || true
     echo "== ritmo de quadros (build/deck_pace.log)"
-    PY=$(command -v python3 || command -v python)
-    "$PY" "$ROOT/tools/pace_summary.py" "$ROOT/build/deck_pace.log" || true
+    PY=""  # no Windows, "python3" pode ser o atalho da Microsoft Store, que não roda nada
+    for c in python3 python; do "$c" -c '' 2>/dev/null && { PY=$c; break; }; done
+    [ -n "$PY" ] && "$PY" "$ROOT/tools/pace_summary.py" "$ROOT/build/deck_pace.log" || true
 fi

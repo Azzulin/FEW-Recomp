@@ -320,6 +320,22 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
 - Envio só de alguns arquivos: `ARQUIVOS="few few-steam.sh" bash tools/deck/enviar-para-deck.sh` (sem conferir os
   ~19 GB de NSPs).
 
+### Medido no Deck (2026-11-15, build `0b31f52e…`, partículas ligadas)
+
+`battle_long.txt` pelo SSH (`DECK_PACE=1`), resumo de `tools/pace_summary.py`:
+
+| Trecho | 30 fps (`fps60=0`, 1080p, padrão) | 60 fps (`fps60=1`, 720p) |
+|---|---|---|
+| menus, abertura | 56–59 fps | igual |
+| luta leve (104–124 s) | 28,8 fps, mediana 33,3 ms (segura os 30) | — |
+| luta densa (164–230 s) | 10–11 fps, mediana 88–99 ms | ~12–14 fps (73–81 ms por quadro, média do `display: 300 frames`) |
+
+Antes (laço+`switch`): ~3,5 fps (270 ms). O tradutor estruturado deu ~3x, mas a luta densa ainda fica longe dos
+30. A resolução pesa pouco (720p a 60 Hz só ~15 ms melhor por quadro): o custo é das partículas. O log enche de
+`vk: slow: wait_serial took 50 ms` (a CPU esperando a GPU). Próximo passo: `HWDER_GPU_TIMING=5` no Deck para ver
+quanto cada despacho dos três shaders grandes custa agora (era ~0,7 ms com um grupo só), e as estatísticas do RADV
+(drm-shim) para saber se ainda há despejo em scratch. Enquanto isso, `HWDER_GMEM=0` volta aos 30 fps sem partículas.
+
 ## Pendências, por prioridade
 
 1. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em

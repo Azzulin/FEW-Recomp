@@ -113,6 +113,7 @@ WriteLF "$out\few-steam.sh" @'
 # Para desligar as partículas da GPU (caso a batalha pese): HWDER_GMEM=0 nas opções de inicialização.
 cd "$(dirname -- "$0")" || exit 1
 if [ -f hwder_settings.ini ] && ! grep -q '^fps60=' hwder_settings.ini; then
+    [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # o .ini pode terminar sem quebra de linha
     printf 'fps60=0\nfps60_1080p=0\n' >> hwder_settings.ini
 fi
 exec ./few "$@"
