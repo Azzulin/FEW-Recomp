@@ -10,6 +10,7 @@
 #include <new>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "gpu/diag.h"
@@ -125,16 +126,19 @@ extern float g_res_scale, g_res_scale_y;  // internal resolution scale (x, y) fo
 
 // ------------------------------------------------------------------ GPU timing (HWDER_GPU_TIMING, vk_sched.cpp)
 namespace gputime {
-enum Kind : u32 { kOther, kPass, kDispatch };  // kDispatch: one compute launch (w h fmt = grid, prog = program key)
+enum Kind : u32 { kOther, kPass, kDispatch, kDraw };  // kDispatch: one compute launch (w h fmt = grid, prog = program key);
+                                                    // kDraw: one draw (HWDER_GPU_TIMING_DRAWS; prog = fragment, vs = vertex)
 struct Seg {
     u32 kind = kOther, w = 0, h = 0, fmt = 0, dfmt = 0, ncol = 0;
     u64 prog = 0;  // fragment shader of the first draw
+    u64 vs = 0;    // kDraw: vertex shader
+    u64 verts = 0; // kDraw: vertices (or indices) drawn
     u32 draws = 0, clears = 0;
 };
 bool on();
 // Starts a new segment in the current command buffer (a timestamp after the work recorded so far).
 void mark(u32 kind, u32 w = 0, u32 h = 0, u32 fmt = 0, u32 dfmt = 0, u32 ncol = 0);
-void count_draw(u64 prog);
+void count_draw(u64 prog, u64 vs = 0, u32 verts = 0);
 void count_clear();
 }  // namespace gputime
 
@@ -225,6 +229,8 @@ struct Image {
     VkDeviceMemory mem = VK_NULL_HANDLE;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageUsageFlags usage = 0;  // as created (image views restrict it per format)
+    VkFormat view_twin = VK_FORMAT_UNDEFINED;  // with a format list: the one other view format allowed (sRGB/UNORM)
+    bool format_list = false;                  // created with VkImageFormatListCreateInfo (keeps DCC on AMD)
     std::unordered_map<ViewKey, VkImageView, ViewKeyHash> views;
     bool gpu_modified = false;   // GPU data newer than guest memory
     u64 write_seq = 0;           // order of the last GPU write (aliasing images are refreshed from the newest)
@@ -320,6 +326,8 @@ private:
     std::unordered_map<u64, u64> watch_blocks_;  // 2 MiB block -> recorder serial of its last query (kNotWatched: query per image)
     std::unordered_map<u64, u64> watch_written_;  // 2 MiB block -> latest epoch any of its pages was reported written
     u64 watch_pruned_ = 0;
+    // Colour formats the game viewed outside an image's format list: their later images get no list (alloc_image).
+    std::unordered_set<VkFormat> unlisted_formats_;
     u64 epoch_ = 1;
 };
 

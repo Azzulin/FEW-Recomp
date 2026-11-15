@@ -522,6 +522,24 @@ int TextureCache::written_since(u64 addr, u64 size, u64& watch_epoch) {
     return 0;
 }
 
+// The sRGB/UNORM twin of a colour format (a render target the game also samples in the other encoding), or
+// VK_FORMAT_UNDEFINED.
+static VkFormat srgb_twin(VkFormat f) {
+    switch (f) {
+    case VK_FORMAT_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_SRGB;
+    case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
+    case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_B8G8R8A8_SRGB;
+    case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
+    case VK_FORMAT_A8B8G8R8_UNORM_PACK32: return VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32: return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    case VK_FORMAT_R8_UNORM: return VK_FORMAT_R8_SRGB;
+    case VK_FORMAT_R8_SRGB: return VK_FORMAT_R8_UNORM;
+    case VK_FORMAT_R8G8_UNORM: return VK_FORMAT_R8G8_SRGB;
+    case VK_FORMAT_R8G8_SRGB: return VK_FORMAT_R8G8_UNORM;
+    default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 void TextureCache::alloc_image(Image* img) {
     const ImageInfo& info = img->info;
     std::optional<ProfScope> ps(std::in_place, kProfCreateImage);
@@ -548,6 +566,23 @@ void TextureCache::alloc_image(Image* img) {
         if (info.fmt.vk == VK_FORMAT_R32G32B32_SFLOAT || info.fmt.vk == VK_FORMAT_R32G32B32_UINT ||
             info.fmt.vk == VK_FORMAT_R32G32B32_SINT)
             ci.usage &= ~(VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    }
+    // A mutable image without a format list may be viewed in any compatible format, and RADV then turns off DCC
+    // (colour compression) on GFX10.3 and older: the Steam Deck rendered every colour target uncompressed and the
+    // battle's particle blending ran 15-30x slower than on a desktop GPU. The game reinterprets colour targets only
+    // as their sRGB/UNORM twin (measured over a whole battle), so the list is that pair. A view in any other format
+    // turns lists off for later images of that format (view() logs it).
+    VkImageFormatListCreateInfo fl{VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+    VkFormat list[2];
+    if ((ci.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) && !debug::flag(debug::NoFormatList) &&
+        !unlisted_formats_.count(ci.format)) {
+        list[0] = ci.format;
+        fl.viewFormatCount = 1;
+        img->view_twin = srgb_twin(ci.format);
+        if (img->view_twin != VK_FORMAT_UNDEFINED) list[fl.viewFormatCount++] = img->view_twin;
+        fl.pViewFormats = list;
+        ci.pNext = &fl;
+        img->format_list = true;
     }
     if (info.type == ImageType::e2D && info.layers >= 6 && info.width == info.height)
         ci.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -1070,6 +1105,13 @@ VkImageView TextureCache::view(Image* img, VkFormat fmt, VkImageViewType type, u
             uci.usage &= img->usage;
             if (uci.usage) ci.pNext = &uci;
         }
+    }
+    if (img->format_list && fmt != ifmt.vk && fmt != img->view_twin) {
+        // Outside the image's format list (alloc_image): invalid, and on AMD a DCC-compressed image read through
+        // an incompatible format can come out garbled. Later images of this format are created without a list.
+        if (unlisted_formats_.insert(ifmt.vk).second)
+            hw_log("vk: view format %d on image format %d (%ux%u) is outside its format list; later images of that "
+                   "format are created without one (no DCC)", (int)fmt, (int)ifmt.vk, img->info.width, img->info.height);
     }
     VkImageView v = VK_NULL_HANDLE;
     VkResult r = vkCreateImageView(dev(), &ci, nullptr, &v);

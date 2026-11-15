@@ -16,14 +16,14 @@ Recorder g_rec;
 
 namespace gputime {
 namespace {
-constexpr u32 kMaxQueries = 2048;
+constexpr u32 kMaxQueries = 8192;  // a battle frame with HWDER_GPU_TIMING_DRAWS: ~1400 dispatch marks + a mark per draw
 struct Agg {
     double ns = 0;
-    u64 segs = 0, draws = 0, clears = 0;
+    u64 segs = 0, draws = 0, clears = 0, verts = 0;
 };
 struct GroupKey {
     u32 kind, w, h, fmt, dfmt, ncol;
-    u64 prog;
+    u64 prog, vs;
     bool operator==(const GroupKey& o) const { return !memcmp(this, &o, sizeof(*this)); }
 };
 struct GroupKeyHash {
@@ -81,10 +81,11 @@ void frame_done(Frame* f) {
         const double ns = ts[i + 1] >= ts[i] ? (ts[i + 1] - ts[i]) * tick_ns : 0.0;
         g_t.busy_ns += ns;
         g_t.segs++;
-        Agg& a = g_t.groups[GroupKey{s.kind, s.w, s.h, s.fmt, s.dfmt, s.ncol, s.prog}];
+        Agg& a = g_t.groups[GroupKey{s.kind, s.w, s.h, s.fmt, s.dfmt, s.ncol, s.prog, s.vs}];
         a.ns += ns;
         a.segs++;
         a.draws += s.draws;
+        a.verts += s.verts;
         a.clears += s.clears;
     }
     const u64 now = host::ticks_ms();
@@ -101,7 +102,7 @@ void frame_done(Frame* f) {
         double passes_ns = 0, other_ns = 0;
         u64 passes = 0;
         for (const auto& [k, a] : v) {
-            if (k.kind == kPass) passes_ns += a.ns, passes += a.segs;
+            if (k.kind == kPass || k.kind == kDraw) passes_ns += a.ns, passes += k.kind == kPass ? a.segs : 0;
             else other_ns += a.ns;
         }
         hw_log("gpu-time: per frame (%llu presents): busy %.2f ms, idle between submissions %.2f ms, %.1f submissions, "
@@ -109,6 +110,12 @@ void frame_done(Frame* f) {
                (double)g_t.cbs / presents, (double)passes / presents, passes_ns / pf, other_ns / pf);
         for (size_t i = 0; i < v.size() && i < 30; i++) {
             const auto& [k, a] = v[i];
+            if (k.kind == kDraw) {
+                hw_log("gpu-time:   %6.3f ms %5.1f/frame %8.0f verts/draw | draw  %ux%u f%u vs %016llx fs %016llx",
+                       a.ns / pf, (double)a.segs / presents, (double)a.verts / std::max<u64>(a.segs, 1), k.w, k.h, k.fmt,
+                       (unsigned long long)k.vs, (unsigned long long)k.prog);
+                continue;
+            }
             hw_log("gpu-time:   %6.3f ms %5.1f/frame %6.1f draws %4.1f clears | %s %ux%u f%u d%u n%u prog %016llx", a.ns / pf,
                    (double)a.segs / presents, (double)a.draws / presents, (double)a.clears / presents,
                    k.kind == kPass ? "pass " : k.kind == kDispatch ? "disp " : "other",
@@ -133,8 +140,19 @@ void mark(u32 kind, u32 w, u32 h, u32 fmt, u32 dfmt, u32 ncol) {
     f->segs.push_back(s);
 }
 
-void count_draw(u64 prog) {
+void count_draw(u64 prog, u64 vs, u32 verts) {
     if (!on() || !g_s.cur || g_s.cur->segs.empty()) return;
+    // HWDER_GPU_TIMING_DRAWS=1: a segment per draw, grouped by its shaders (inside a pass, in the pass's size).
+    static const bool per_draw = debug::flag(debug::GpuTimingDraws);
+    if (per_draw) {
+        const Seg cur = g_s.cur->segs.back();
+        mark(kDraw, cur.w, cur.h, cur.fmt, cur.dfmt, cur.ncol);
+        Seg& d = g_s.cur->segs.back();
+        if (d.kind == kDraw) {  // mark() refuses when the query pool is full
+            d.prog = prog, d.vs = vs, d.verts = verts, d.draws = 1;
+            return;
+        }
+    }
     Seg& s = g_s.cur->segs.back();
     if (!s.prog) s.prog = prog;
     s.draws++;

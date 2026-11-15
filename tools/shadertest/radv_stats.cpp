@@ -8,7 +8,8 @@
 //   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json LD_PRELOAD=<libamdgpu_noop_drm_shim.so> //       AMDGPU_GPU_ID=vangogh ./radv_stats a.spv b.spv
 //
 // The descriptor set layout is rebuilt from the SPIR-V (DescriptorSet/Binding decorations and storage classes),
-// so any program the translator emits can be compiled.
+// so any program the translator emits can be compiled. A graphics pair is given as "vs.spv+fs.spv": it is compiled
+// into a minimal pipeline (dynamic rendering, no vertex input, one 16-bit float colour target per fragment output).
 #include <vulkan/vulkan.h>
 
 #include <chrono>
@@ -47,6 +48,20 @@ struct Binding {
     uint32_t set = 0, binding = 0, count = 1;
     VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;
 };
+
+// Fragment outputs (OpVariable in the Output storage class with a Location): the colour attachment count.
+static uint32_t fragment_outputs(const std::vector<uint32_t>& w) {
+    std::map<uint32_t, uint32_t> loc;
+    uint32_t n = 0;
+    for (size_t i = 5; i < w.size();) {
+        uint32_t op = w[i] & 0xFFFF, len = w[i] >> 16;
+        if (!len) break;
+        if (op == 71 && w[i + 2] == 30) loc[w[i + 1]] = w[i + 3];  // OpDecorate Location
+        if (op == 59 && w[i + 3] == 3 && loc.count(w[i + 2])) n = std::max(n, loc[w[i + 2]] + 1);  // Output
+        i += len;
+    }
+    return n;
+}
 
 // Minimal SPIR-V reflection: enough for the translator's output.
 static std::vector<Binding> reflect(const std::vector<uint32_t>& w, uint32_t& push_size) {
@@ -140,7 +155,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.apiVersion = VK_API_VERSION_1_2;
+    app.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
     VkInstance inst;
@@ -166,8 +181,10 @@ int main(int argc, char** argv) {
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pef{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     pef.pipelineExecutableInfo = VK_TRUE;
+    VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    f13.pNext = &pef;
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    f12.pNext = &pef;
+    f12.pNext = &f13;
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.pNext = &f12;
     vkGetPhysicalDeviceFeatures2(pd, &f2);
@@ -185,11 +202,24 @@ int main(int argc, char** argv) {
     auto getStats = (PFN_vkGetPipelineExecutableStatisticsKHR)vkGetDeviceProcAddr(dev, "vkGetPipelineExecutableStatisticsKHR");
 
     for (int a = 1; a < argc; a++) {
-        auto spv = read_spv(argv[a]);
-        uint32_t push = 0;
+        std::string arg = argv[a];
+        const size_t plus = arg.find('+');
+        const bool graphics = plus != std::string::npos;
+        auto spv = read_spv((graphics ? arg.substr(plus + 1) : arg).c_str());  // compute, or the fragment shader
+        std::vector<uint32_t> vspv;
+        uint32_t push = 0, vpush = 0;
         auto binds = reflect(spv, push);
+        if (graphics) {
+            vspv = read_spv(arg.substr(0, plus).c_str());
+            for (auto& b : reflect(vspv, vpush)) binds.push_back(b);
+            push = std::max(push, vpush);
+        }
         std::map<uint32_t, std::vector<VkDescriptorSetLayoutBinding>> sets;
-        for (auto& b : binds) sets[b.set].push_back({b.binding, b.type, b.count, VK_SHADER_STAGE_ALL, nullptr});
+        for (auto& b : binds) {
+            bool dup = false;
+            for (auto& e : sets[b.set]) dup |= e.binding == b.binding;
+            if (!dup) sets[b.set].push_back({b.binding, b.type, b.count, VK_SHADER_STAGE_ALL, nullptr});
+        }
         uint32_t nsets = sets.empty() ? 0 : sets.rbegin()->first + 1;
         std::vector<VkDescriptorSetLayout> layouts(nsets);
         for (uint32_t s = 0; s < nsets; s++) {
@@ -212,13 +242,64 @@ int main(int argc, char** argv) {
         smi.pCode = spv.data();
         VkShaderModule sm;
         CHECK(vkCreateShaderModule(dev, &smi, nullptr, &sm));
-        VkComputePipelineCreateInfo cpi{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-        cpi.flags = VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
-        cpi.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, sm, "main"};
-        cpi.layout = pl;
         VkPipeline pipe;
+        VkShaderModule vsm = VK_NULL_HANDLE;
         auto t0 = std::chrono::steady_clock::now();
-        CHECK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpi, nullptr, &pipe));
+        if (graphics) {
+            smi.codeSize = vspv.size() * 4;
+            smi.pCode = vspv.data();
+            CHECK(vkCreateShaderModule(dev, &smi, nullptr, &vsm));
+            VkPipelineShaderStageCreateInfo st[2] = {
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vsm, "main"},
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, sm, "main"}};
+            const uint32_t ncol = std::max(1u, fragment_outputs(spv));
+            std::vector<VkFormat> fmts(ncol, VK_FORMAT_R16G16B16A16_SFLOAT);
+            std::vector<VkPipelineColorBlendAttachmentState> blend(ncol);
+            for (auto& b : blend) b.colorWriteMask = 0xF;
+            VkPipelineRenderingCreateInfo rci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+            rci.colorAttachmentCount = ncol;
+            rci.pColorAttachmentFormats = fmts.data();
+            rci.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+            rci.stencilAttachmentFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+            VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+            vp.viewportCount = vp.scissorCount = 1;
+            VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            rs.lineWidth = 1;
+            VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+            VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            cb.attachmentCount = ncol;
+            cb.pAttachments = blend.data();
+            VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+            VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+            dy.dynamicStateCount = 2;
+            dy.pDynamicStates = dyn;
+            VkGraphicsPipelineCreateInfo gpi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            gpi.pNext = &rci;
+            gpi.flags = VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+            gpi.stageCount = 2;
+            gpi.pStages = st;
+            gpi.pVertexInputState = &vi;
+            gpi.pInputAssemblyState = &ia;
+            gpi.pViewportState = &vp;
+            gpi.pRasterizationState = &rs;
+            gpi.pMultisampleState = &ms;
+            gpi.pDepthStencilState = &ds;
+            gpi.pColorBlendState = &cb;
+            gpi.pDynamicState = &dy;
+            gpi.layout = pl;
+            CHECK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &gpi, nullptr, &pipe));
+        } else {
+            VkComputePipelineCreateInfo cpi{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            cpi.flags = VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+            cpi.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, sm, "main"};
+            cpi.layout = pl;
+            CHECK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpi, nullptr, &pipe));
+        }
         double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         printf("%s: compile %.0f ms\n", argv[a], ms);
         VkPipelineInfoKHR pinfo{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};
@@ -251,6 +332,7 @@ int main(int argc, char** argv) {
         }
         vkDestroyPipeline(dev, pipe, nullptr);
         vkDestroyShaderModule(dev, sm, nullptr);
+        if (vsm) vkDestroyShaderModule(dev, vsm, nullptr);
         vkDestroyPipelineLayout(dev, pl, nullptr);
         for (auto l : layouts) vkDestroyDescriptorSetLayout(dev, l, nullptr);
     }

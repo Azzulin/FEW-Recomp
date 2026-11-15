@@ -45,6 +45,7 @@ enum Id {
     GiObjSync,  // HWDER_GI_OBJ_SYNC
     GiObjTrace,  // HWDER_GI_OBJ_TRACE
     GpuTiming,  // HWDER_GPU_TIMING
+    GpuTimingDraws,  // HWDER_GPU_TIMING_DRAWS
     GpuTrace,  // HWDER_GPU_TRACE
     GuestLibc,  // HWDER_GUEST_LIBC
     Hold,  // HWDER_HOLD
@@ -59,6 +60,7 @@ enum Id {
     Mods,  // HWDER_MODS
     Mute,  // HWDER_MUTE
     NoFastClear,  // HWDER_NO_FAST_CLEAR
+    NoFormatList,  // HWDER_NO_FORMAT_LIST
     NoMods,  // HWDER_NO_MODS
     NoPrelaunch,  // HWDER_NO_PRELAUNCH
     Nsp,  // HWDER_NSP

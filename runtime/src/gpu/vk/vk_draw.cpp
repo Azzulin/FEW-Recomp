@@ -810,7 +810,8 @@ void VkRenderer::record_draw(const u32* regs, const DrawParams& p, const Framebu
     r.vertex_offset = vertex_offset;
     r.base_instance = p.base_instance;
     g_rec.record([r](VkCommandBuffer cb) { r.exec(cb); });
-    gputime::count_draw(prog->stages[4] ? prog->stages[4]->key : 0);
+    gputime::count_draw(prog->stages[4] ? prog->stages[4]->key : 0, prog->stages[0] ? prog->stages[0]->key
+                                                                   : prog->stages[1] ? prog->stages[1]->key : 0, count);
     for (u32 i = 0; i < fb.num_colors; i++)
         if (fb.color[i] && key.color_mask[i]) tc_.mark_modified(fb.color[i]);
     if (fb.depth && (key.depth_write || key.stencil_enable)) tc_.mark_modified(fb.depth);
