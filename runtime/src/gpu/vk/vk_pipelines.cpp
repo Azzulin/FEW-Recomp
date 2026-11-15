@@ -138,6 +138,14 @@ ShaderEntry* VkRenderer::get_shader(GuestEnv& env, shader::Stage stage, const sh
             fwrite(l.data(), 1, l.size(), f);
             fclose(f);
         }
+        // tools/shadertest input (the stage is in the name: vs, tcs, tes, gs, fs, cs)
+        static const char* kStageExt[] = {"vsa", "vs", "tcs", "tes", "gs", "fs", "cs"};
+        snprintf(name, sizeof(name), "shader_%016llx.%s.bin", (unsigned long long)key, kStageExt[(u32)stage % 7]);
+        if (FILE* f = fopen(name, "wb")) {
+            std::vector<u8> bin = shader::program_binary(env, stage);
+            fwrite(bin.data(), 1, bin.size(), f);
+            fclose(f);
+        }
     }
     e->ok = true;
     return e;

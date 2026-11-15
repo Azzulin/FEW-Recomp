@@ -3,6 +3,7 @@ list(APPEND RUNTIME_SOURCES
     runtime/src/shader/decode.cpp
     runtime/src/shader/fallback.cpp
     runtime/src/shader/translate.cpp
+    runtime/src/shader/structurize.cpp
     runtime/src/shader/program.cpp
     runtime/src/shader/emit_alu.cpp
     runtime/src/shader/emit_mem.cpp

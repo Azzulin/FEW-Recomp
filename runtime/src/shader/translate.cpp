@@ -197,7 +197,39 @@ int Translator::block_of(u32 pc, const Stack& st) {
     return it->second;
 }
 
-void Translator::emit_block_body(const Block& blk) {
+std::vector<int> Translator::successors(const Block& blk) {
+    Stack st = stacks[blk.sid];
+    for (size_t i = 0; i < blk.insts.size(); i++) {
+        u32 pc = blk.insts[i];
+        u64 raw = env.read_instruction(pc);
+        Inst in{raw};
+        Op op = decode(raw);
+        if (is_program_end(raw)) op = Op::INVALID;
+        u32 target = 0;
+        Stack tstack;
+        int k = flow(pc, in, op, st, target, tstack);
+        u32 nx = next_pc(pc);
+        bool last = i + 1 == blk.insts.size();
+        switch (k) {
+        case 0:
+        case 4:
+            if (last) return {block_of(nx, st)};
+            break;
+        case 1:
+            return {block_of(target, tstack)};
+        case 2: {
+            int t = block_of(target, tstack), f = block_of(nx, st);
+            if (t == f) return {t};
+            return {t, f};
+        }
+        case 3:
+            return {};
+        }
+    }
+    return {};
+}
+
+Translator::Term Translator::emit_block_body(const Block& blk) {
     Stack st = stacks[blk.sid];
     for (size_t i = 0; i < blk.insts.size(); i++) {
         u32 pc = blk.insts[i];
@@ -210,7 +242,6 @@ void Translator::emit_block_body(const Block& blk) {
         cur_index = i;
         u32 target = 0;
         Stack tstack;
-        Stack before = st;
         int k = flow(pc, in, op, st, target, tstack);
         u32 nx = next_pc(pc);
         bool last = i + 1 == blk.insts.size();
@@ -222,19 +253,15 @@ void Translator::emit_block_body(const Block& blk) {
                 emit_predicated(in, op);
             }
             if (last) {
-                if (dispatcher) set_next(block_of(nx, st));
-                else hw_log("[shader] straight-line block fell off the end");
+                if (blocks.size() > 1) return {1, 0, block_of(nx, st)};
+                hw_log("[shader] straight-line block fell off the end");
             }
             break;
         case 1:
-            if (dispatcher) set_next(block_of(target, tstack));
-            break;
+            return {1, 0, block_of(target, tstack)};
         case 2: {
             Id c = guard_cond(in, op == Op::BRA || op == Op::SYNC || op == Op::BRK || op == Op::CONT || op == Op::RET);
-            Id t = b.c_uint(u32(block_of(target, tstack)));
-            Id f = b.c_uint(u32(block_of(nx, st)));
-            b.store(pc_var, b.op(spv::OpSelect, t_u32, {c, t, f}));
-            break;
+            return {2, c, block_of(target, tstack), block_of(nx, st)};
         }
         case 3:
             if (op == Op::KIL) {
@@ -244,19 +271,19 @@ void Translator::emit_block_body(const Block& blk) {
                 emit_epilogue();
                 b.terminate(spv::OpReturn);
             }
-            return;
+            return {};
         case 4: {
             Id c = guard_cond(in, true);
             if_then(c, [&] {
                 emit_epilogue();
                 b.terminate(spv::OpReturn);
             });
-            if (last && dispatcher) set_next(block_of(nx, st));
+            if (last && blocks.size() > 1) return {1, 0, block_of(nx, st)};
             break;
         }
         }
-        (void)before;
     }
+    return {};
 }
 
 void Translator::set_next(int block) { b.store(pc_var, b.c_uint(u32(block))); }
@@ -303,17 +330,19 @@ void Translator::emit_kill(Inst in) {
 void Translator::run() {
     build_cfg();
     scan_global_memory();
-    dispatcher = blocks.size() > 1;
+    dispatcher = blocks.size() > 1 && !structured;
     begin_program();
     Id fn_t = b.t_func(t_void);
     main_fn = b.begin_function(t_void, fn_t);
     prologue();
-    if (!dispatcher) {
+    if (blocks.size() == 1) {
         emit_block_body(blocks[0]);
         if (b.block_open) {
             emit_epilogue();
             b.terminate(spv::OpReturn);
         }
+    } else if (!dispatcher) {
+        emit_structured();
     } else {
         pc_var = b.local_var(b.t_ptr(spv::StorageClassFunction, t_u32), b.c_uint(0));
         Id header = b.id(), body = b.id(), cont = b.id(), merge = b.id(), sw_merge = b.id();
@@ -334,7 +363,9 @@ void Translator::run() {
         b.terminate(spv::OpSwitch, sw);
         for (size_t i = 0; i < blocks.size(); i++) {
             b.label(labels[i]);
-            emit_block_body(blocks[i]);
+            Term tm = emit_block_body(blocks[i]);
+            if (tm.kind == 1) set_next(tm.t);
+            else if (tm.kind == 2) b.store(pc_var, b.op(spv::OpSelect, t_u32, {tm.cond, b.c_uint(u32(tm.t)), b.c_uint(u32(tm.f))}));
             if (b.block_open) b.branch(sw_merge);
         }
         b.label(sw_merge);
@@ -369,6 +400,18 @@ std::string listing(Environment& env, Stage stage) {
     return out;
 }
 
+std::vector<u8> program_binary(Environment& env, Stage stage) {
+    std::vector<u8> out(0x50, 0);
+    if (stage != Stage::Compute) memcpy(out.data(), env.sph(), 0x50);
+    for (u32 addr = 0; addr < 0x20000; addr += 8) {
+        u64 w = env.read_instruction(addr);
+        const u8* p = (const u8*)&w;
+        out.insert(out.end(), p, p + 8);
+        if ((addr / 8) % 4 != 0 && is_program_end(w)) break;
+    }
+    return out;
+}
+
 Program translate(Environment& env, Stage stage, const Options& opt, Environment* vertex_a) {
     if (vertex_a) log_once("VertexA programs are not supported; translating VertexB only");
     // Debug: HWDER_SHADER_FALLBACK=all replaces every stage, =frag only fragment shaders (solid magenta).
@@ -376,7 +419,19 @@ Program translate(Environment& env, Stage stage, const Options& opt, Environment
     if (force && (!strcmp(force, "all") || (stage == Stage::Fragment && !strcmp(force, "frag"))))
         return make_fallback(stage);
     try {
+        // Debug: HWDER_SHADER_DISPATCHER=1 emits every multi-block program as the loop+switch dispatcher (comparison).
+        static const bool dispatcher_only = debug::flag(debug::ShaderDispatcher);
+        if (!dispatcher_only) {
+            try {
+                Translator t(env, stage, opt);
+                t.run();
+                return std::move(t.prog);
+            } catch (const StructureFailed& e) {
+                log_once(std::string("structured control flow failed (") + e.what() + "), using the block dispatcher");
+            }
+        }
         Translator t(env, stage, opt);
+        t.structured = false;
         t.run();
         return std::move(t.prog);
     } catch (const Unsupported& e) {

@@ -56,12 +56,14 @@ current values. Kinds:
 | `HWDER_GPU_TRACE` | string | unset | GPU command trace; "2": raw 3D method stream (first 200000); "3": host methods, class binds and submissions. |
 | `HWDER_GUEST_LIBC` | presence | off | Run the game's own (translated) memcpy/memmove/memset/bzero/strlen instead of the host C library's. |
 | `HWDER_HOLD` | presence | off | On a fatal error keep the window up showing the reason instead of exiting. |
+| `HWDER_INDIRECT_SYNC` | presence | off | Renderer: before reading a GPFIFO entry that compute shaders wrote (NVN's indirect draw arguments), wait for that GPU work and its copy back to guest memory, as before (default: read what the last finished copy back left, one or two frames old; each wait drained the GPU). |
 | `HWDER_IPC_BT` | string | unset | Log a backtrace for the IPC command named "<Service>#<command>" (e.g. IFile#4). |
 | `HWDER_IPC_DUMP` | string | unset | Dump the raw request/response bytes of IPC calls whose target service name contains the value (empty: all). |
 | `HWDER_IPC_TRACE` | presence | off | Service call (IPC) trace, including Control requests. |
 | `HWDER_KEYS` | presence | off | prod.keys path (the loader reads it as a wide string; the startup screen only notes that it is set). |
 | `HWDER_LOG` | presence | off | Log file path (set by test launchers); when set the window opens minimized unless HWDER_SHOW is set. |
 | `HWDER_MASK_FEATURES` | string | unset | Test: comma-separated Vulkan 1.1-1.3 feature names (e.g. shaderFloat16) the GPU is treated as not offering, to exercise the device feature checks. |
+| `HWDER_MIN_TIMED_WAIT_US` | integer | unset | Kernel: shortest real wait, in microseconds, for a guest condition-variable wait with a shorter positive timeout (a signal still wakes it at once). A job worker polls with sub-10 us timeouts ~6600 times a frame, a busy loop on the host. |
 | `HWDER_MODS` | string | unset | Mods folder to use instead of the one in the settings or the default (read as a path; see fs/mods.h). |
 | `HWDER_MUTE` | presence | off | No audio output; also: no message boxes, and with HWDER_OFFSCREEN marks an automated run. |
 | `HWDER_NO_FAST_CLEAR` | presence | off | Renderer: clear whole colour targets with vkCmdClearAttachments instead of a load-op fast clear (always on for Intel GPUs, whose driver crashed in it, issue #6). |
@@ -83,7 +85,8 @@ current values. Kinds:
 | `HWDER_RES_SCALE` | number | unset | Internal resolution scale override (0.5 to 4). |
 | `HWDER_RES_SCALE_X` | number | unset | Per-axis resolution scale override, X (test aid: emulate another window aspect). |
 | `HWDER_RES_SCALE_Y` | number | unset | Per-axis resolution scale override, Y. |
-| `HWDER_SAMPLE_US` | integer | unset | Linux: sample the GPU command thread and, in battle, MainThread every that many microseconds of their CPU time; counts per function, per MainThread tick phase and per address go to <log>.samples.txt and <log>.samples-main.txt every 10 s. |
+| `HWDER_SAMPLE_US` | integer | unset | Sample the GPU command thread and, in battle, MainThread every that many microseconds of their CPU time (Linux) or of wall time (Windows, the last 10 s per report); counts per function, per MainThread tick phase and per address go to <log>.samples.txt and <log>.samples-main.txt every 10 s. |
+| `HWDER_SHADER_DISPATCHER` | presence | off | Shader translation: emit multi-block programs as the old loop+switch block dispatcher instead of structured control flow (comparison). |
 | `HWDER_SHADER_FALLBACK` | string | unset | "all": replace every stage, "frag": only fragment shaders, with the solid-magenta fallback. |
 | `HWDER_SHADER_NO_KIL` | presence | off | Shader translation: turn every (conditional) KIL into a no-op (alpha-test diagnosis). |
 | `HWDER_SHOW` | presence | off | Show the window normally even in an automated (HWDER_LOG) run. |

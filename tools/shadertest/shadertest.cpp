@@ -1,7 +1,10 @@
 // Offline harness for the Maxwell -> SPIR-V translator.
 //   shadertest hist <dir>            opcode histogram over every program in <dir>
 //   shadertest run <dir> <outdir>    translate every program, write <outdir>/<name>.spv
-//   shadertest one <file.bin> <out.spv>
+//   shadertest one <file.bin> <out.spv> [local_x local_y local_z shared_bytes]   (compute: workgroup and smem)
+//
+// Builds on Windows (build.py, clang-cl) and Linux (clang++ -std=c++20 -Iruntime/include -Iruntime/src
+// -Ithird_party/spirv-headers/include tools/shadertest/shadertest.cpp runtime/src/shader/*.cpp).
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -29,8 +32,20 @@ extern "C" void hw_fatal(const char* why) {
 
 namespace fs = std::filesystem;
 
+static FILE* open_file(const fs::path& p, const char* mode) {
+#ifdef _WIN32
+    std::wstring m(mode, mode + strlen(mode));
+    return _wfopen(p.c_str(), m.c_str());
+#else
+    return fopen(p.c_str(), mode);
+#endif
+}
+
 struct FileEnv : shader::Environment {
     std::vector<u8> data;
+    u32 local[3] = {1, 1, 1}, smem = 0;
+    u32 local_size(int axis) override { return local[axis]; }
+    u32 shared_memory_size() override { return smem; }
     u64 read_instruction(u32 address) override {
         size_t o = 0x50 + size_t(address);
         if (o + 8 > data.size()) return 0;
@@ -45,7 +60,7 @@ struct FileEnv : shader::Environment {
 };
 
 static bool load(const fs::path& p, FileEnv& e) {
-    FILE* f = _wfopen(p.c_str(), L"rb");
+    FILE* f = open_file(p, "rb");
     if (!f) return false;
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
@@ -67,7 +82,7 @@ static shader::Stage stage_of(const fs::path& p) {
 }
 
 static void write_spv(const fs::path& out, const std::vector<u32>& spv) {
-    FILE* f = _wfopen(out.c_str(), L"wb");
+    FILE* f = open_file(out, "wb");
     if (!f) return;
     fwrite(spv.data(), 4, spv.size(), f);
     fclose(f);
@@ -82,6 +97,10 @@ int main(int argc, char** argv) {
     if (mode == "one") {
         FileEnv e;
         if (!load(argv[2], e)) return 1;
+        if (argc >= 8) {
+            for (int i = 0; i < 3; i++) e.local[i] = u32(atoi(argv[4 + i]));
+            e.smem = u32(atoi(argv[7]));
+        }
         shader::Options opt;
         opt.convert_depth_mode = true;
         auto prog = shader::translate(e, stage_of(argv[2]), opt);

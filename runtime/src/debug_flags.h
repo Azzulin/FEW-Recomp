@@ -48,6 +48,7 @@ enum Id {
     GpuTrace,  // HWDER_GPU_TRACE
     GuestLibc,  // HWDER_GUEST_LIBC
     Hold,  // HWDER_HOLD
+    IndirectSync,  // HWDER_INDIRECT_SYNC
     IpcBt,  // HWDER_IPC_BT
     IpcDump,  // HWDER_IPC_DUMP
     IpcTrace,  // HWDER_IPC_TRACE
@@ -77,6 +78,7 @@ enum Id {
     ResScaleX,  // HWDER_RES_SCALE_X
     ResScaleY,  // HWDER_RES_SCALE_Y
     SampleUs,  // HWDER_SAMPLE_US
+    ShaderDispatcher,  // HWDER_SHADER_DISPATCHER
     ShaderFallback,  // HWDER_SHADER_FALLBACK
     ShaderNoKil,  // HWDER_SHADER_NO_KIL
     Show,  // HWDER_SHOW

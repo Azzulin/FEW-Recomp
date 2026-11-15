@@ -4,7 +4,9 @@
 // Function variables (drivers promote them to SSA). Control flow is resolved statically: the CRS stack
 // (SSY/PBK/PCNT/CAL tokens) is part of the CFG state, so SYNC/BRK/CONT/RET become direct jumps (code
 // reached with different stacks is duplicated). A single-block program is emitted straight-line; anything
-// else becomes a loop+switch dispatcher over basic blocks, which is always valid structured control flow.
+// else is rebuilt as nested selections and loops (structurize.cpp). A graph the structurizer cannot handle
+// (irreducible) falls back to a loop+switch dispatcher over basic blocks, which is always valid structured
+// control flow but slow on AMD: every jump walks the switch and every guest register stays live everywhere.
 #pragma once
 #include <functional>
 #include <map>
@@ -18,6 +20,10 @@
 namespace shader {
 
 struct Unsupported : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+// The block graph has no structured form the structurizer can build: translate again with the dispatcher.
+struct StructureFailed : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 void log_once(const std::string& msg);
@@ -50,6 +56,7 @@ public:
     bool is_vs = false, is_fs = false;
 
     // ---- CFG
+    bool structured = true;   // multi-block programs: structured control flow (false: the dispatcher)
     bool dispatcher = false;
     Id pc_var = 0, main_fn = 0;
     u32 cur_pc = 0;
@@ -62,7 +69,15 @@ public:
     int flow(u32 pc, Inst in, Op op, Stack& st, u32& target, Stack& tstack);
     void build_cfg();
     int block_of(u32 pc, const Stack& st);
-    void emit_block_body(const Block& blk);
+    // How a block ends: 0 terminated (return/kill emitted), 1 jump to t, 2 cond ? t : f.
+    struct Term {
+        int kind = 0;
+        Id cond = 0;
+        int t = -1, f = -1;
+    };
+    std::vector<int> successors(const Block& blk);  // the blocks emit_block_body may jump to, without emitting
+    Term emit_block_body(const Block& blk);
+    void emit_structured();  // structurize.cpp
     void set_next(int block);
     void if_then(Id cond, const std::function<void()>& body);
     Id guard_cond(Inst in, bool with_cc);

@@ -121,6 +121,9 @@ Program translate(Environment& env, Stage stage, const Options& opt, Environment
 
 // Debug: text listing of the Maxwell instruction stream (pc, raw word, opcode, register fields).
 std::string listing(Environment& env, Stage stage);
+// Debug: the program as tools/shadertest reads it: the 0x50-byte SPH (zero for compute) and the code up to and
+// including the terminating branch.
+std::vector<u8> program_binary(Environment& env, Stage stage);
 
 // Stable hash of the program bytes (for pipeline cache keys).
 u64 hash_program(Environment& env, Stage stage);
