@@ -1,8 +1,41 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-14 (noite). A quarta rodada (60 fps na batalha com as partículas ligadas) está commitada e
-medida no PC; o build do Deck com ela está **pronto em `Envio Deck`, mas não foi enviado nem testado** (o dono
-estava usando o aparelho). Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
+Atualizado em 2026-11-15. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
+atualize ao terminar uma sessão.
+
+## Retomar aqui (2026-11-15)
+
+Objetivo do dono: batalha a 30 fps **estáveis no Steam Deck com as partículas ligadas** ("não quero comprometer o
+jogo pela estabilidade"). Nada de desligar efeito (`HWDER_GMEM=0` não é solução). Estado: a luta densa no Deck
+estava em ~11 fps; três correções novas (seção "Sessão de 2026-11-15") estão commitadas, compiladas e **já
+copiadas para o Deck, mas não medidas lá** (o aparelho estava com outro jogo aberto no fim da sessão).
+
+Passo a passo:
+
+1. **Deck livre**: ligado, no Modo Jogo, sem jogo aberto (o teste se recusa a rodar com um jogo aberto). Conferir
+   o SSH: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> uptime`.
+2. **Conferir que o `few` do Deck é o desta sessão**: se o PC tiver código mais novo, regerar com
+   `.\gerar-deck.ps1` e enviar com `ARQUIVOS="few few-steam.sh LEIA-ME.txt" bash tools/deck/enviar-para-deck.sh`
+   (o envio confere o SHA-256).
+3. **Medir a batalha** (~5 min; save vazio até o prólogo e luta longa):
+   `DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230`.
+   Olhar a tabela "ritmo de quadros": as janelas de 165 a 230 s são a luta densa. Referência antes das correções:
+   10–11 fps (1080p) e 11–12 fps (720p).
+4. **A/B do encadeamento de despachos**: o mesmo comando com `DECK_ENV="HWDER_DISPATCH_SERIAL=1"` diz quanto o
+   encadeamento rende sozinho. As lutas não são idênticas entre execuções (a quantidade de inimigos varia):
+   comparar mediana e p95 das janelas densas, de preferência com duas execuções de cada.
+5. **Onde está o tempo agora**: `DECK_ENV="HWDER_TIMELINE=195"` grava uma linha do tempo de 0,5 s em
+   `<pasta do Deck>/hwder.log.timeline.txt`. Ler como na seção "Sessão de 2026-11-15": de `gpfifo` a `gpu idle` é
+   a gravação; de `gpu idle` a `comp fence done` é a GPU. `DECK_ENV="HWDER_GPU_TIMING=5"` dá o tempo de GPU por
+   passe (com ele ligado o fps cai: não use para medir fps).
+6. **Conforme o resultado**:
+   - GPU ainda acima de 33 ms: ver as maiores linhas `gpu-time` (passe `e789f3db` de iluminação, ~7,8 ms a 720p;
+     `other`, ~11 ms; despachos) e atacar a maior.
+   - Gravação na CPU (~14 ms com a GPU parada) pesando: **envio em pedaços** (submeter o command buffer no meio da
+     gravação para a GPU começar antes; cuidado com as cópias de volta de `gmem`, que hoje vão uma vez por command
+     buffer em `gmem_record_copybacks`).
+   - 30 fps estáveis: atualizar a tabela do Deck neste arquivo e o `LEIA-ME.txt` (`gerar-deck.ps1`).
+7. **Fechar a sessão**: commitar e atualizar este arquivo (estado, medidas, pendências).
 
 ## Estado
 
@@ -29,9 +62,9 @@ padrão 720p, que é também o do próprio modo Desempenho do jogo.
 
 O travamento da batalha da terceira rodada segue resolvido.
 
-**Steam Deck**: o build que está no cartão SD é o de 2026-11-13 (30 fps, partículas da GPU desligadas por
-`HWDER_GMEM=0`). O build novo (`few` sha256 `0b31f52e…`, com o tradutor estruturado e as partículas ligadas) está
-montado em `Envio Deck\FireEmblemWarriors`, falta enviar e medir (pendência 1). **No Deck o padrão é 30 fps**
+**Steam Deck**: o cartão SD tem o build de 2026-11-15 (partículas ligadas, 30 fps a 720p, uploads de `gmem` só do
+que mudou, despachos encadeados), ainda não medido; o anterior fazia ~11 fps na luta densa (seção "Retomar
+aqui"). **No Deck o padrão é 30 fps**
 (`fps60=0`, modo Qualidade): decisão do dono, porque no FEW 30 fps é o ritmo nativo da batalha no Switch (a lógica
 segue `g_FrameRate`), ao contrário do HWDE; 60 fps fica como opção no menu.
 
@@ -54,7 +87,8 @@ segue `g_FrameRate`), ao contrário do HWDE; 60 fps fica como opção no menu.
 | Laço de quadros (jogo × thread da GPU) | `-Env "HWDER_TIMELINE=<s>"`: 0,5 s de eventos em `build\run\hwder.log.timeline.txt` (µs) |
 | Validar todos os shaders (WSL) | rodar com `HWDER_DUMP_SHADERS=1`, depois `wsl -d archlinux -u root -- bash "/mnt/c/…/tools/shadertest/wsl_validate.sh"` |
 | Engenharia reversa do `main` | `wsl -d archlinux -u root -- python3 "/mnt/c/…/tools/gxref.py" callers 0x…` (ver o cabeçalho) |
-| Modo 30 fps (Qualidade) / 720p | `-Ini "fps60=0"` / `-Ini "fps60_1080p=0"` |
+| Modo 30 fps (Qualidade) / 720p | `-Ini "fps60=0"` / `-Ini "fps60_1080p=0"`; 30 fps a 720p: `-Ini "fps30_720p=1"` |
+| Um quadro de despachos de compute | `-Env "HWDER_DISPATCH_TRACE=<s>"`: linhas `dtrace:` (programa, grade, faixas lidas/escritas, uploads) |
 
 Testes rodam em `build\run` (save, ajustes e caches próprios), nunca em `Jogar no PC`, que é do jogador.
 O toolchain é o privado do HWDER, em `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\HWDER\managed-tools\…`
@@ -365,27 +399,64 @@ Medido no Deck com `HWDER_GPU_TIMING=5`, `HWDER_GPU_TIMING_DRAWS=1` (novo: tempo
 - As barras brancas em pilares e arcos (capturas `dcc_*`, `nofl_*`) existem com e sem a lista de formatos: problema
   antigo, ainda não investigado.
 
+## Sessão de 2026-11-15: batalha densa no Deck
+
+Medido no Deck (luta densa do `battle_long.txt`): **~10,6 fps** com a correção de warp (`72ed05f`). O passe
+`e789f3db` mudou pouco (16,0 → 14,9 ms): as listas de luz longas não eram o principal. A linha do tempo
+(`HWDER_TIMELINE`) mostra, por quadro e em série: a thread de comandos grava ~14 ms com a GPU parada, a GPU trabalha
+~60 ms e o jogo leva ~5 ms para entregar o quadro seguinte. **O gargalo é a GPU**: passes ~27–40 ms, despachos e
+"other" ~25 ms.
+
+Três correções, todas sem tirar efeito:
+
+1. **"720p at 30 fps"** (`fps30_720p`, `settings.h low_res_30`). Padrão desligado no PC e **ligado no Deck**: o
+   `.ini` do `gerar-deck.ps1`, o `few-steam.sh` e o `testar-no-deck.sh` acrescentam as chaves que faltam. O gancho
+   `Display_SetMode` grava no modo Qualidade o id de configuração do modo Desempenho (0 → 3, 3 → 8): 30 fps a
+   1280×720, o resto igual ao Qualidade. A tela do Deck tem 800 linhas. Medido no Deck: passes 40 → 27,5 ms, luta
+   densa 10,6 → ~11,5 fps (sozinho não basta).
+2. **Uploads de `gmem` só do que mudou** (`vk_resources.cpp gmem_upload_changed`). A cópia de volta de um buffer
+   escrito pela GPU também é uma escrita na memória do guest: o write-watch acusava o buffer inteiro e o bind
+   seguinte o reenviava inteiro. ~150 buffers de partículas (até ~1 MB cada, **~31 MB por quadro**) faziam guest →
+   GPU → guest todo quadro. Agora o `readback` serve de espelho: é igual à cópia da GPU enquanto nada está
+   pendente (`mirror_bytes`). Ele é comparado com a memória do guest em blocos de 4 KiB e só o que difere sobe.
+   Medido no PC com `HWDER_DISPATCH_TRACE`: 139 uploads no quadro, **0 bytes diferentes**.
+3. **Despachos encadeados sem barreira** (`vk_draw.cpp do_dispatch`; `Recorder::chain` em `vk_common.h` e
+   `vk_sched.cpp`). Cada despacho esperava o anterior esvaziar a GPU. No rastreio de um quadro, de 432 despachos só
+   ~45 dependem de um anterior por faixa de storage buffer. Agora a barreira entra em quatro casos:
+   - o despacho lê ou escreve uma faixa que outro da cadeia escreveu;
+   - o despacho escreve uma faixa que outro da cadeia lê;
+   - o programa usa imagens;
+   - antes de qualquer outro comando. `Recorder::record` fecha a cadeia; `record_raw` (despachos e timestamps)
+     não fecha.
+
+   `HWDER_DISPATCH_SERIAL=1` volta à barreira após cada despacho (A/B).
+
+No PC (RTX 3050, 1080p, modo 30 fps) a imagem da batalha sai correta com as três. O fps no PC não serviu de A/B: as
+duas execuções tiveram lutas diferentes (53 contra 119 KO no mesmo instante). **Falta medir no Deck** (seção
+"Retomar aqui").
+
+Ferramenta nova: `HWDER_DISPATCH_TRACE=<s>` loga um quadro inteiro de despachos e de uploads de `gmem` (linhas
+`dtrace:`), a partir de <s> segundos depois do primeiro despacho. Cada despacho mostra programa, grade, faixas de
+storage buffer lidas e escritas e imagens. A análise de dependências foi um script Python simples sobre essas
+linhas, procurando sobreposição de faixas `w`/`r`.
+
 ## Pendências, por prioridade
 
-1. **Medir no Deck a correção de warp** (`72ed05f`, build `few` já enviado): `DECK_FRESH=1 DECK_PACE=1
-   DECK_INPUT=tools/input/battle_long.txt DECK_ENV="HWDER_GPU_TIMING=5" bash tools/deck/testar-no-deck.sh 230` e
-   comparar o draw `e789f3db` (13,5 ms antes) e a luta densa (10–11 fps antes). Depois: envio em pedaços (seção
-   acima).
-1b. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em
-   `Envio Deck\FireEmblemWarriors`: `few-steam.sh` sem o `HWDER_GMEM=0` (as partículas voltam) e, como o envio
-   mantém o `.ini` do Deck, o lançador e o `testar-no-deck.sh` acrescentam `fps60=0` e `fps60_1080p=0` quando
-   `fps60` falta (30 fps no modo Qualidade; a cena renderiza a 1920×1080, id de configuração 0).
-   (a) Enviar: `ARQUIVOS="few few-steam.sh LEIA-ME.txt" bash tools/deck/enviar-para-deck.sh`. (b) Medir a batalha
-   pelo SSH: `DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230`
-   (resume o fps por janela; o `kVersion` 3 do warmup faz a primeira batalha compilar de novo). (c) Se a batalha
-   ficar abaixo de 30 fps com as partículas, ver as estatísticas do RADV (drm-shim, seção da sessão de 2026-11-14:
-   precisa de autorização do dono para compilar o shim) e comparar com `DECK_ENV="HWDER_GMEM=0"`. Se o limite for
-   a resolução (1080p numa tela de 800 linhas), um ajuste "30 fps a 720p" no gancho `Display_SetMode` (gravar o id 3
-   no modo 0) é barato; ainda não existe.
-2. **Custo por despacho** (~600 por quadro na luta densa; é o que tira a luta densa de 60 a 720p): `gmem_upload`
-   recopia o buffer inteiro do descritor 0 (até 4 MB) quando o write-watch acusa qualquer página (copiar só as
-   páginas sujas); `written_since` chama `GetWriteWatch` por bind; `do_dispatch` monta `GuestEnv` com `std::function`
-   e lê o QMD a cada despacho. Medir com `HWDER_SAMPLE_US=1000` + `symbolize_samples.py` no trecho 165–230 s.
+1. **Batalha densa a 30 fps no Deck com as partículas** (o objetivo do dono): medir as correções de 2026-11-15
+   seguindo "Retomar aqui". Candidatos seguintes, nesta ordem:
+   - envio em pedaços, para sobrepor os ~14 ms de gravação com a GPU;
+   - o passe de iluminação `e789f3db` (~7,8 ms a 720p no Deck, contra ~1 ms a 1080p no PC);
+   - o "other" (~11 ms, ~750 segmentos por quadro).
+
+   Para os shaders: estatísticas do RADV pelo drm-shim (`tools/shadertest/radv_stats.cpp`, que agora aceita o par
+   `vs.spv+fs.spv`).
+2. **Custo por despacho na CPU**:
+   - `written_since` chama `GetWriteWatch` por bind;
+   - `do_dispatch` monta `GuestEnv` com `std::function` e lê o QMD a cada despacho;
+   - a comparação com o espelho de `gmem` lê ~31 MB por quadro. É barata perto do upload que substituiu, mas
+     aparece no perfil.
+
+   Medir com `HWDER_SAMPLE_US=1000` + `symbolize_samples.py` no trecho 165–230 s.
 3. **Draw indireto na GPU** (substitui a leitura atrasada dos argumentos): macro 25 com parâmetros vindos de memória
    pendente vira `vkCmdDrawIndexedIndirect` lendo o buffer de `gmem` (quads viram índices de um buffer fixo; um
    despacho pequeno converte `{contagem, instâncias, primeiro, instância base}` no comando indexado). Exige também

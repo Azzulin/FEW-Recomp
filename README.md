@@ -16,8 +16,8 @@ módulos e quase o mesmo SDK (3.7.0 contra 3.5.1). Detalhes em [docs/few.md](doc
 Roda nativo no Windows e no Steam Deck: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo
 (com as partículas da GPU), com as cinco DLCs montadas pelo jogo. No PC a batalha roda a 60 fps no modo
 Desempenho do próprio jogo, ligado pelo runtime (`fps60=1`, a 720p como no Switch; `fps60_1080p=1` para 1080p).
-No Steam Deck o build no cartão ainda é o anterior (30 fps, sem as partículas da GPU); o novo está pronto para
-envio e medição. Os extras do HWDER que dependem de endereços do
+No Steam Deck a batalha roda no modo Qualidade (30 fps, o ritmo nativo do FEW) a 720p, com as partículas; a luta
+densa ainda fica abaixo de 30 fps (trabalho em andamento, ver o handover). Os extras do HWDER que dependem de endereços do
 Hyrule Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução
 fica em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
 
