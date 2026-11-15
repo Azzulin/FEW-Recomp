@@ -79,6 +79,9 @@ extern Sched g_s;
 extern void (*g_before_submit)();
 extern void (*g_before_submit_gmem)();  // the same, for storage buffer copy-backs (VkRenderer::gmem_record_copybacks)
 extern bool g_dtrace;  // HWDER_DISPATCH_TRACE: the frame being traced (do_dispatch)
+// Bytes of shader-written global memory copied back to the guest (changed) out of those compared (total) since the
+// waiter thread last put them on the timeline.
+extern std::atomic<u64> g_copyback_changed, g_copyback_total;
 extern Recorder g_rec;
 
 void wait_serial(u64 serial);

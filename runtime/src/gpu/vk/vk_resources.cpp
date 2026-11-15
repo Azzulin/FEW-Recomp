@@ -801,7 +801,21 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
             gmem_copyback_.push_back(gb);  // the GPU copy is recorded when this command buffer is submitted
             g_rec.defer([gb, serial] {     // waiter thread, once it completed
                 if (gb->pending.load() != serial) return;  // written again later: that copy-back runs instead
-                memcpy(gb->host, gb->readback.map, gb->guest_bytes);
+                // Only the pages whose contents differ are written: a write to guest memory marks the page in the
+                // texture cache's write watch, so the next bind would compare the whole buffer with the mirror. In a
+                // dense battle the particle shaders rewrite ~30 MB per frame and ~120 KiB of it changes (Steam Deck,
+                // "vk deferred" on the HWDER_TIMELINE).
+                const u8* from = gb->readback.map;
+                u8* to = gb->host;
+                u64 changed = 0;
+                for (u64 off = 0, n; off < gb->guest_bytes; off += n) {
+                    n = std::min<u64>(4096 - (((u64)(uintptr_t)to + off) & 4095), gb->guest_bytes - off);
+                    if (memcmp(to + off, from + off, n) == 0) continue;
+                    memcpy(to + off, from + off, n);
+                    changed += n;
+                }
+                g_copyback_changed.fetch_add(changed, std::memory_order_relaxed);
+                g_copyback_total.fetch_add(gb->guest_bytes, std::memory_order_relaxed);
                 gb->mirror_bytes.store(std::min(gb->guest_bytes, gb->copyback_bytes), std::memory_order_relaxed);
                 gb->pending.store(0, std::memory_order_release);
             });

@@ -5,6 +5,7 @@
 #include "gpu/hang_state.h"
 #include "host/timing.h"
 #include "host/platform.h"
+#include "host/sampler.h"
 
 namespace gpu::vk {
 
@@ -12,6 +13,7 @@ Sched g_s;
 void (*g_before_submit)() = nullptr;
 void (*g_before_submit_gmem)() = nullptr;
 bool g_dtrace = false;
+std::atomic<u64> g_copyback_changed{0}, g_copyback_total{0};
 
 Recorder g_rec;
 
@@ -413,6 +415,7 @@ void waiter_thread() {
             f = g_s.in_flight.front();
         }
         wait_serial(f->serial);
+        host::timeline("vk fence", f->serial, f->deferred.size());
         gputime::frame_done(f);
         u64 v = 0;
         vkGetSemaphoreCounterValue(dev(), g_s.timeline, &v);
@@ -420,6 +423,7 @@ void waiter_thread() {
             hang::Where hw("deferred work of serial", f->serial);
             for (auto& fn : f->deferred) fn();
         }
+        host::timeline("vk deferred", g_copyback_changed.exchange(0) >> 10, g_copyback_total.exchange(0) >> 10);
         f->deferred.clear();
         // Reset the finished frame's pools here rather than on the GPU thread when it is reused (~0.4 ms per
         // submission in big battles). The frame belongs to this thread until it is back in free_frames.
