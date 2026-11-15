@@ -40,9 +40,9 @@ if pgrep -af 'reaper.*SteamLaunch|SteamLaunch' >/dev/null || pgrep -x few >/dev/
     echo "ERRO: há um jogo aberto no Deck; teste cancelado"; exit 2
 fi
 [ -x few ] || chmod +x few
-# Como no few-steam.sh: um .ini de build antigo não tem fps60_1080p, e no Deck o padrão é 720p.
-if [ -f hwder_settings.ini ] && ! grep -q '^fps60_1080p=' hwder_settings.ini; then
-    printf 'fps60_1080p=0\n' >> hwder_settings.ini
+# Como no few-steam.sh: um .ini de build antigo não tem fps60, e no Deck o padrão é 30 fps (modo Qualidade).
+if [ -f hwder_settings.ini ] && ! grep -q '^fps60=' hwder_settings.ini; then
+    printf 'fps60=0\nfps60_1080p=0\n' >> hwder_settings.ini
 fi
 echo "== $(sha256sum few | cut -c1-16)…  few, teste de $SECS s em DISPLAY=$DISP${INPUT:+, roteiro $INPUT}${FRESH:+, save vazio}"
 export DISPLAY=$DISP XDG_RUNTIME_DIR=/run/user/$(id -u) HWDER_OFFSCREEN=1 HWDER_MUTE=1 HWDER_NO_PRELAUNCH=1

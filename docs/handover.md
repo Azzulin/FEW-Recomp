@@ -30,8 +30,10 @@ padrão 720p, que é também o do próprio modo Desempenho do jogo.
 O travamento da batalha da terceira rodada segue resolvido.
 
 **Steam Deck**: o build que está no cartão SD é o de 2026-11-13 (30 fps, partículas da GPU desligadas por
-`HWDER_GMEM=0`). O build novo (`few` sha256 `0b31f52e…`, com o tradutor estruturado, o modo Desempenho a 720p e as
-partículas ligadas) está montado em `Envio Deck\FireEmblemWarriors`, falta enviar e medir (pendência 1).
+`HWDER_GMEM=0`). O build novo (`few` sha256 `0b31f52e…`, com o tradutor estruturado e as partículas ligadas) está
+montado em `Envio Deck\FireEmblemWarriors`, falta enviar e medir (pendência 1). **No Deck o padrão é 30 fps**
+(`fps60=0`, modo Qualidade): decisão do dono, porque no FEW 30 fps é o ritmo nativo da batalha no Switch (a lógica
+segue `g_FrameRate`), ao contrário do HWDE; 60 fps fica como opção no menu.
 
 ## Como trabalhar
 
@@ -322,13 +324,15 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
 
 1. **Steam Deck** (o objetivo do dono; precisa do aparelho acordado e sem jogo aberto). O build está pronto em
    `Envio Deck\FireEmblemWarriors`: `few-steam.sh` sem o `HWDER_GMEM=0` (as partículas voltam) e, como o envio
-   mantém o `.ini` do Deck, o lançador e o `testar-no-deck.sh` acrescentam `fps60_1080p=0` quando a chave falta.
+   mantém o `.ini` do Deck, o lançador e o `testar-no-deck.sh` acrescentam `fps60=0` e `fps60_1080p=0` quando
+   `fps60` falta (30 fps no modo Qualidade; a cena renderiza a 1920×1080, id de configuração 0).
    (a) Enviar: `ARQUIVOS="few few-steam.sh LEIA-ME.txt" bash tools/deck/enviar-para-deck.sh`. (b) Medir a batalha
    pelo SSH: `DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230`
    (resume o fps por janela; o `kVersion` 3 do warmup faz a primeira batalha compilar de novo). (c) Se a batalha
    ficar abaixo de 30 fps com as partículas, ver as estatísticas do RADV (drm-shim, seção da sessão de 2026-11-14:
-   precisa de autorização do dono para compilar o shim) e, enquanto isso, comparar com `fps60=0` (30 Hz) e com
-   `DECK_ENV="HWDER_GMEM=0"`; decidir o padrão do Deck.
+   precisa de autorização do dono para compilar o shim) e comparar com `DECK_ENV="HWDER_GMEM=0"`. Se o limite for
+   a resolução (1080p numa tela de 800 linhas), um ajuste "30 fps a 720p" no gancho `Display_SetMode` (gravar o id 3
+   no modo 0) é barato; ainda não existe.
 2. **Custo por despacho** (~600 por quadro na luta densa; é o que tira a luta densa de 60 a 720p): `gmem_upload`
    recopia o buffer inteiro do descritor 0 (até 4 MB) quando o write-watch acusa qualquer página (copiar só as
    páginas sujas); `written_since` chama `GetWriteWatch` por bind; `do_dispatch` monta `GuestEnv` com `std::function`

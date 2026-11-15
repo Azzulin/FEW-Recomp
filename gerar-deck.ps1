@@ -100,19 +100,20 @@ update_path=update
 save_dir=save
 async_shaders=1
 show_fps=1
-fps60=1
+fps60=0
 fps60_1080p=0
 '@
 
 WriteLF "$out\few-steam.sh" @'
 #!/bin/sh
 # Lançador do atalho "Fire Emblem Warriors" na Steam (escrito por gerar-deck.ps1).
-# Batalha no modo Desempenho do jogo (60 Hz) a 1280x720: a tela do Deck é 1280x800 e a GPU não segura 1080p.
-# Um .ini de um build antigo não tem a chave; depois da primeira gravação vale o que estiver no menu (F1).
-# Para voltar a desligar as partículas da GPU (caso a batalha pese): HWDER_GMEM=0 nas opções de inicialização.
+# Batalha no modo Qualidade do jogo (30 fps, o ritmo nativo do FEW no Switch): no Deck a GPU fica com o dobro de
+# tempo por quadro para as partículas. 60 fps: "60 fps battles" no menu (F1), a 720p ("1080p at 60 fps" desligado).
+# Um .ini de um build antigo não tem as chaves; depois da primeira gravação vale o que estiver no menu.
+# Para desligar as partículas da GPU (caso a batalha pese): HWDER_GMEM=0 nas opções de inicialização.
 cd "$(dirname -- "$0")" || exit 1
-if [ -f hwder_settings.ini ] && ! grep -q '^fps60_1080p=' hwder_settings.ini; then
-    printf 'fps60_1080p=0\n' >> hwder_settings.ini
+if [ -f hwder_settings.ini ] && ! grep -q '^fps60=' hwder_settings.ini; then
+    printf 'fps60=0\nfps60_1080p=0\n' >> hwder_settings.ini
 fi
 exec ./few "$@"
 '@
@@ -157,8 +158,8 @@ Primeira vez: Modo Desktop > Dolphin > esta pasta > F4 (terminal aqui) >  sh ins
 O jogo aparece na biblioteca da Steam, aba Não Steam: "Fire Emblem Warriors".
 
 - Compilado para o processador do Deck (Zen 2, -march=znver2): não roda em CPUs sem as mesmas instruções.
-- A batalha roda no modo Desempenho do próprio jogo (60 fps pedidos) a 1280x720. Menu F1: "60 fps battles"
-  desligado volta ao modo Qualidade (30 fps); "1080p at 60 fps" renderiza a 1920x1080 (pesado no Deck).
+- A batalha roda a 30 fps, o ritmo do próprio jogo no Switch (modo Qualidade); menus a 60. Menu F1:
+  "60 fps battles" liga o modo Desempenho (60 fps a 1280x720; "1080p at 60 fps" é pesado demais para o Deck).
   Não force 30 fps na Steam nos menus (60 fps).
 - Se a batalha ficar lenta, as partículas da GPU (poeira, riscos de velocidade) podem ser desligadas: na Steam,
   Propriedades > Opções de inicialização:  HWDER_GMEM=0 %command%
