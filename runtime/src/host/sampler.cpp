@@ -3,7 +3,7 @@
 // and the current phase tag (g_sample_phase). Every 10 s each thread's counts are written to its own file beside
 // the log (<log>.samples.txt, <log>.samples-main.txt): per function, per phase and function, and per address
 // (count, offset in the executable, function), so `addr2line -f -i -e hwder <offset>` gives the source line.
-// Windows: not available.
+// Windows: wall-clock samples of the same threads, see the second half of this file.
 #include "host/sampler.h"
 
 #include "host/platform.h"
@@ -275,10 +275,155 @@ void sample_current_thread(int period_us, const std::string& path) {
 }
 }  // namespace host
 #else
+// Windows: wall-clock sampling. A sampler thread suspends the target every period, reads its context and unwinds a
+// few frames (RtlVirtualUnwind), then resumes it. Each 10 s report covers only the last 10 s. Nothing is allocated while the target is suspended (it may hold
+// the heap lock). Waits show up too (the thread's blocked location), which is what a busy figure that includes
+// waits needs. Report: by leaf function, by inclusive function (any of the first frames) and by phase.
+#include <windows.h>
+#include <dbghelp.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
 namespace host {
-void name_sample_phase(unsigned char, const char*) {}
-void sample_current_thread(int period_us, const std::string&) {
-    if (period_us > 0) hw_log("sampler: HWDER_SAMPLE_US is Linux-only");
+namespace {
+constexpr unsigned kDepth = 12;
+constexpr std::uint32_t kMaxSamples = 1u << 20;
+struct WinSample {
+    std::uintptr_t pc[kDepth];
+    unsigned char depth, phase;
+};
+const char* g_phase_names[256] = {};
+std::mutex g_sym_m;
+
+std::string symbol_name(std::uintptr_t pc) {
+    std::lock_guard<std::mutex> l(g_sym_m);
+    char buf[sizeof(SYMBOL_INFO) + 256] = {};
+    auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sym->MaxNameLen = 255;
+    DWORD64 disp = 0;
+    if (SymFromAddr(GetCurrentProcess(), pc, &disp, sym)) return sym->Name;
+    char mod[64];
+    std::snprintf(mod, sizeof(mod), "?%#llx", static_cast<unsigned long long>(pc));
+    return mod;
+}
+
+void dump_win(const std::string& path, const WinSample* s, std::uint32_t n) {
+    std::unordered_map<std::uintptr_t, std::string> names;
+    auto name_of = [&](std::uintptr_t pc) -> const std::string& {
+        auto it = names.find(pc);
+        if (it != names.end()) return it->second;
+        return names[pc] = symbol_name(pc);
+    };
+    std::unordered_map<std::string, std::uint32_t> leaf, incl;
+    std::map<unsigned char, std::unordered_map<std::string, std::uint32_t>> by_phase;
+    std::map<unsigned char, std::uint32_t> phase_total;
+    std::unordered_map<std::string, std::uint32_t> callers;  // "leaf <- caller" for the top leaves
+    for (std::uint32_t i = 0; i < n; i++) {
+        const WinSample& x = s[i];
+        const std::string& l0 = name_of(x.pc[0]);
+        leaf[l0]++;
+        by_phase[x.phase][l0]++;
+        phase_total[x.phase]++;
+        std::unordered_set<std::string> seen;
+        for (unsigned d = 0; d < x.depth; d++) {
+            const std::string& nm = name_of(x.pc[d]);
+            if (seen.insert(nm).second) incl[nm]++;
+        }
+        std::string chain = l0;
+        for (unsigned d = 1; d < x.depth && d < 4; d++) chain += " <- " + name_of(x.pc[d]);
+        callers[chain]++;
+    }
+    auto ranked = [](const std::unordered_map<std::string, std::uint32_t>& m) {
+        std::vector<std::pair<std::uint32_t, std::string>> r;
+        for (auto& [k, c] : m) r.push_back({c, k});
+        std::sort(r.rbegin(), r.rend());
+        return r;
+    };
+    const std::string tmp = path + ".tmp";
+    FILE* f = std::fopen(tmp.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, "%u samples (wall clock)\n\nby leaf function:\n", n);
+    auto r = ranked(leaf);
+    for (std::size_t i = 0; i < r.size() && i < 60; i++)
+        std::fprintf(f, "%8u %5.1f%% %s\n", r[i].first, 100.0 * r[i].first / std::max(n, 1u), r[i].second.substr(0, 200).c_str());
+    std::fprintf(f, "\ninclusive (function anywhere in the first %u frames):\n", kDepth);
+    r = ranked(incl);
+    for (std::size_t i = 0; i < r.size() && i < 80; i++)
+        std::fprintf(f, "%8u %5.1f%% %s\n", r[i].first, 100.0 * r[i].first / std::max(n, 1u), r[i].second.substr(0, 200).c_str());
+    std::fprintf(f, "\nleaf <- callers:\n");
+    r = ranked(callers);
+    for (std::size_t i = 0; i < r.size() && i < 80; i++)
+        std::fprintf(f, "%8u %5.1f%% %s\n", r[i].first, 100.0 * r[i].first / std::max(n, 1u), r[i].second.substr(0, 300).c_str());
+    if (phase_total.size() > 1) {
+        std::fprintf(f, "\nby phase:\n");
+        for (auto& [p, c] : phase_total)
+            std::fprintf(f, "%8u %5.1f%% %s\n", c, 100.0 * c / std::max(n, 1u), g_phase_names[p] ? g_phase_names[p] : (p ? "?" : "untagged"));
+    }
+    std::fclose(f);
+    std::remove(path.c_str());
+    std::rename(tmp.c_str(), path.c_str());
+}
+}  // namespace
+
+void name_sample_phase(unsigned char phase, const char* name) { g_phase_names[phase] = name; }
+
+void sample_current_thread(int period_us, const std::string& path) {
+    if (period_us <= 0) return;
+    HANDLE h = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
+                         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) {
+        hw_log("sampler: DuplicateHandle failed");
+        return;
+    }
+    auto* buf = static_cast<WinSample*>(std::calloc(kMaxSamples, sizeof(WinSample)));
+    if (!buf) return;
+    hw_log("sampler: sampling this thread every %d us of wall time into %s", period_us, path.c_str());
+    std::thread([h, buf, period_us, path] {
+        std::uint32_t n = 0;
+        auto last_dump = std::chrono::steady_clock::now();
+        for (;;) {
+            if (period_us >= 1000) Sleep(period_us / 1000);
+            else std::this_thread::sleep_for(std::chrono::microseconds(period_us));
+            if (SuspendThread(h) == (DWORD)-1) break;
+            CONTEXT ctx{};
+            ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+            if (GetThreadContext(h, &ctx) && n < kMaxSamples) {
+                WinSample& s = buf[n];
+                s.phase = g_sample_phase;
+                s.depth = 0;
+                for (unsigned d = 0; d < kDepth && ctx.Rip; d++) {
+                    s.pc[s.depth++] = ctx.Rip;
+                    DWORD64 image = 0;
+                    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &image, nullptr);
+                    if (!fn) {  // leaf function: the return address is at [rsp]
+                        ctx.Rip = *reinterpret_cast<DWORD64*>(ctx.Rsp);
+                        ctx.Rsp += 8;
+                        continue;
+                    }
+                    void* handler_data = nullptr;
+                    DWORD64 frame = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, fn, &ctx, &handler_data, &frame, nullptr);
+                }
+                n++;
+            }
+            ResumeThread(h);
+            if (std::chrono::steady_clock::now() - last_dump > std::chrono::seconds(10)) {
+                dump_win(path, buf, n);  // the last 10 s only: the file always shows the latest window
+                n = 0;
+                last_dump = std::chrono::steady_clock::now();
+            }
+        }
+    }).detach();
 }
 }  // namespace host
 #endif
