@@ -22,6 +22,8 @@ enum Id {
     AutoplayX,  // HWDER_AUTOPLAY_X
     CacheProfile,  // HWDER_CACHE_PROFILE
     CacheSaveSync,  // HWDER_CACHE_SAVE_SYNC
+    DispatchSerial,  // HWDER_DISPATCH_SERIAL
+    DispatchTrace,  // HWDER_DISPATCH_TRACE
     Drawlog,  // HWDER_DRAWLOG
     DumpAfter,  // HWDER_DUMP_AFTER
     DumpEvery,  // HWDER_DUMP_EVERY

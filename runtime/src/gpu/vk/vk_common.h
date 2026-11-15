@@ -152,9 +152,15 @@ class Recorder {
 public:
     void cmd();          // a command buffer outside any rendering instance (ends one)
     void cmd_in_pass();  // a command buffer, whatever the rendering state
-    // Queue f(VkCommandBuffer) for the current command buffer.
+    // Queue f(VkCommandBuffer) for the current command buffer. Ends a chain of compute launches first (below).
     template <class F>
     void record(F&& f) {
+        if (chain) end_chain();
+        record_raw(std::forward<F>(f));
+    }
+    // The same without ending the chain: compute launches that join it, and timestamps.
+    template <class F>
+    void record_raw(F&& f) {
         if (sync_record()) {
             f(sync_cb());
             return;
@@ -171,6 +177,12 @@ public:
     static bool sync_record();  // HWDER_VK_SYNC_SUBMIT=1
     void end_rendering();
     void barrier();                 // full memory barrier (also ends rendering)
+    // Compute launches in a row (VkRenderer::do_dispatch) skip the barrier between them while none touches a
+    // storage buffer range another one in the chain writes (or writes one it reads): the GPU then overlaps them. The
+    // barrier the last launch owes (its writes before whatever comes next) is recorded when anything else is.
+    bool chain = false;
+    std::vector<std::pair<u64, u64>> chain_reads, chain_writes;  // host address ranges [lo, hi) of the chain's launches
+    void end_chain();
     Slice stage(u64 size, u64 align = 256);
     u64 serial() const { return serial_; }
     u64 completed() const;

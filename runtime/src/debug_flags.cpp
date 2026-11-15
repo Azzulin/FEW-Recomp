@@ -18,6 +18,8 @@ static const Flag kTable[] = {
     {AutoplayX, "HWDER_AUTOPLAY_X", "Autoplay: press X once, 1 s into the battle (the heavy-fight save: starts the special mode).", kPresence},
     {CacheProfile, "HWDER_CACHE_PROFILE", "Pipeline cache / warmup save: log retrieval, snapshot, validation, serialization and disk timings (cache-save:). Read on every save.", kPresence},
     {CacheSaveSync, "HWDER_CACHE_SAVE_SYNC", "Exactly \"1\": save the warmup records synchronously instead of on the background task.", kString},
+    {DispatchSerial, "HWDER_DISPATCH_SERIAL", "Renderer: a barrier after every compute launch, as before launch chaining (A/B tests; vk_draw.cpp do_dispatch).", kPresence},
+    {DispatchTrace, "HWDER_DISPATCH_TRACE", "Renderer: from that many seconds after the first compute launch, log one frame of launches (program, grid, storage buffer ranges, images) and storage buffer uploads (dtrace:).", kFloat},
     {Drawlog, "HWDER_DRAWLOG", "With HWDER_FILMSTRIP: one line per draw into <filmstrip dir>/drawlog.txt while the capture window is open.", kPresence},
     {DumpAfter, "HWDER_DUMP_AFTER", "HWDER_DUMP_FRAMES: no dumps (and no dump stalls) before that many seconds.", kFloat},
     {DumpEvery, "HWDER_DUMP_EVERY", "HWDER_DUMP_FRAMES: dump every n-th presented frame (each dump waits for the GPU).", kInt},

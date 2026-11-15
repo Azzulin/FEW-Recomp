@@ -11,6 +11,7 @@ namespace gpu::vk {
 Sched g_s;
 void (*g_before_submit)() = nullptr;
 void (*g_before_submit_gmem)() = nullptr;
+bool g_dtrace = false;
 
 Recorder g_rec;
 
@@ -43,7 +44,7 @@ double period_s() {
 void write(Frame* f) {
     const VkQueryPool q = f->qpool;
     const u32 i = (u32)f->segs.size();
-    g_rec.record([q, i](VkCommandBuffer cb) { vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, q, i); });
+    g_rec.record_raw([q, i](VkCommandBuffer cb) { vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, q, i); });
 }
 
 void frame_begin(Frame* f) {
@@ -485,6 +486,10 @@ void Recorder::cmd_in_pass() {
     Frame* f = new_frame();
     g_s.cur = f;
     if (!sync_record()) chunk_ = get_chunk(f);
+    // A chain never spans command buffers (Recorder::flush ends it with its full barrier); this one starts with none.
+    chain = false;
+    chain_reads.clear();
+    chain_writes.clear();
     record([](VkCommandBuffer cb) {
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -545,6 +550,13 @@ void Recorder::end_rendering() {
     rendering = false;
     gputime::mark(gputime::kOther);
     record([](VkCommandBuffer cb) { full_barrier(cb); });
+}
+
+void Recorder::end_chain() {
+    chain = false;
+    chain_reads.clear();
+    chain_writes.clear();
+    record_raw([](VkCommandBuffer cb) { dispatch_barrier_after(cb); });
 }
 
 void Recorder::barrier() {

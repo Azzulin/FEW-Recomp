@@ -1193,6 +1193,13 @@ void VkRenderer::fast_clear_color(Image* img, VkImageView view, const VkClearCol
 // ------------------------------------------------------------------ compute
 void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
     st_.dispatches++;
+    if (debug::flag(debug::DispatchTrace)) {
+        static const u64 t0 = host::ticks_ms();
+        static u64 frame = ~0ull;
+        if (frame == ~0ull && host::ticks_ms() - t0 >= (u64)(debug::value(debug::DispatchTrace, 0.0) * 1000))
+            frame = g_s.present_count + 1;
+        g_dtrace = g_s.present_count == frame;
+    }
     u32 q[64];
     mm_->read(qmd_va, q, sizeof(q));
     u64 code_va = (((u64)cr[0x582] << 32) | cr[0x583]) + q[8];
@@ -1306,16 +1313,92 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
     const VkPipeline pipe = cp->pipe;
     const VkPipelineLayout pl = cp->pl;
     const u32 gx = std::max(1u, q[12] & 0x7FFFFFFF), gy = std::max(1u, q[13] & 0xFFFF), gz = std::max(1u, q[13] >> 16);
+    if (g_dtrace) {
+        const shader::Resources& res = cp->sh->prog.resources;
+        char line[1024];
+        int n = snprintf(line, sizeof(line), "dtrace: %llu d%llu %016llx %ux%ux%u l%u |", (unsigned long long)g_s.present_count,
+                         (unsigned long long)st_.draws, (unsigned long long)key, gx, gy, gz, env.lsize[0] * env.lsize[1] * env.lsize[2]);
+        for (const auto& sb : res.storage_buffers) {
+            if (n >= (int)sizeof(line) - 64) break;
+            u64 va = cbuf(sb.cbuf_index, sb.cbuf_offset) | ((u64)cbuf(sb.cbuf_index, sb.cbuf_offset + 4) << 32);
+            n += snprintf(line + n, sizeof(line) - n, " %s%llx+%x", sb.written ? "w" : "r",
+                          (unsigned long long)(uintptr_t)(va ? host(va) : nullptr),
+                          cbuf(sb.cbuf_index, sb.cbuf_offset + 8));
+        }
+        u32 iw = 0;
+        for (const auto& im : res.images) iw += im.is_written;
+        snprintf(line + n, sizeof(line) - n, " | img %zu (w %u) tex %zu tbuf %zu", res.images.size(), iw, res.textures.size(),
+                 res.texel_buffers.size());
+        hw_log("%s", line);
+    }
+    // Chaining (Recorder::chain): a battle frame has ~450-800 launches, mostly one or a few workgroups each, and each
+    // one waited for the previous to drain (on the Steam Deck that drain, not the work, was most of their GPU time).
+    // Most launches of a frame read and write their own particle buffers: measured, ~1 in 10 depends on the launch
+    // before it through a storage buffer. Their only GPU-side inputs and outputs are storage buffers (constant buffers
+    // and texel buffers are copied from guest memory when recorded, textures are written only by render passes, which
+    // end with a full barrier); a program with images is never chained. HWDER_DISPATCH_SERIAL=1 puts the barrier
+    // after every launch back (A/B tests).
+    static const bool serial = debug::flag(debug::DispatchSerial) || getenv("HWDER_DISPATCH_FULL_BARRIERS");
+    const shader::Resources& res = cp->sh->prog.resources;
+    bool chainable = !serial && res.images.empty();
+    u64 rlo[8], rhi[8], wlo[8], whi[8];
+    u32 nr = 0, nw = 0;
+    for (const auto& sb : res.storage_buffers) {
+        const u64 va = cbuf(sb.cbuf_index, sb.cbuf_offset) | ((u64)cbuf(sb.cbuf_index, sb.cbuf_offset + 4) << 32);
+        const u64 size = std::max<u64>(16, cbuf(sb.cbuf_index, sb.cbuf_offset + 8));
+        if (!va) continue;
+        if (sb.written ? nw == 8 : nr == 8) {
+            chainable = false;
+            break;
+        }
+        if (sb.written) wlo[nw] = va, whi[nw++] = va + size;
+        else rlo[nr] = va, rhi[nr++] = va + size;
+    }
+    bool hazard = !g_rec.chain || !chainable;
+    auto overlaps = [](const std::vector<std::pair<u64, u64>>& v, u64 lo, u64 hi) {
+        for (const auto& [a, b] : v)
+            if (lo < b && a < hi) return true;
+        return false;
+    };
+    for (u32 i = 0; i < nw && !hazard; i++)
+        hazard = overlaps(g_rec.chain_writes, wlo[i], whi[i]) || overlaps(g_rec.chain_reads, wlo[i], whi[i]);
+    for (u32 i = 0; i < nr && !hazard; i++) hazard = overlaps(g_rec.chain_writes, rlo[i], rhi[i]);
     // HWDER_GPU_TIMING: each launch is a segment of its own, grouped by program and grid.
     gputime::mark(gputime::kDispatch, gx, gy, gz);
     gputime::count_draw(key);
-    g_rec.record([pipe, pl, set, gx, gy, gz](VkCommandBuffer cb) {
-        dispatch_barrier_before(cb);
+    auto launch = [pipe, pl, set, gx, gy, gz](VkCommandBuffer cb) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
         if (set) vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &set, 0, nullptr);
         vkCmdDispatch(cb, gx, gy, gz);
-        dispatch_barrier_after(cb);
-    });
+    };
+    if (!g_rec.chain) {
+        // After other commands: transfers recorded since (uploads it reads) finish first.
+        g_rec.record([launch](VkCommandBuffer cb) {
+            dispatch_barrier_before(cb);
+            launch(cb);
+        });
+    } else if (hazard) {
+        // Depends on the chain (or cannot join it): the barrier the chain owes, then this launch. No transfer can
+        // have been recorded since the chain started (it would have ended it).
+        g_rec.chain_reads.clear();
+        g_rec.chain_writes.clear();
+        g_rec.record_raw([launch](VkCommandBuffer cb) {
+            dispatch_barrier_after(cb);
+            launch(cb);
+        });
+    } else {
+        g_rec.record_raw(launch);
+    }
+    if (chainable) {
+        g_rec.chain = true;
+        for (u32 i = 0; i < nr; i++) g_rec.chain_reads.emplace_back(rlo[i], rhi[i]);
+        for (u32 i = 0; i < nw; i++) g_rec.chain_writes.emplace_back(wlo[i], whi[i]);
+    } else {
+        g_rec.chain = false;
+        g_rec.chain_reads.clear();
+        g_rec.chain_writes.clear();
+        g_rec.record_raw([](VkCommandBuffer cb) { dispatch_barrier_after(cb); });
+    }
     gputime::mark(gputime::kOther);
     for (auto& f : post) f();
 }

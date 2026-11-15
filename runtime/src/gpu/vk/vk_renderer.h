@@ -78,6 +78,7 @@ extern Sched g_s;
 // Called by Recorder::flush before it submits (the renderer finishes CPU-side writes into staging slices).
 extern void (*g_before_submit)();
 extern void (*g_before_submit_gmem)();  // the same, for storage buffer copy-backs (VkRenderer::gmem_record_copybacks)
+extern bool g_dtrace;  // HWDER_DISPATCH_TRACE: the frame being traced (do_dispatch)
 extern Recorder g_rec;
 
 void wait_serial(u64 serial);
@@ -577,12 +578,17 @@ private:
         u64 copyback_serial = 0;  // serial whose completion already has a copy-back queued (one per command buffer)
         u64 watch_epoch = 0;      // write-watch epoch of the last refresh from guest memory (tc_.written_since)
         u64 uploaded_bytes = 0;   // guest bytes the buffer holds (0: never filled)
+        u64 copyback_bytes = 0;   // bytes the last recorded copy-back copies
+        // Bytes at the start of `readback` equal to the GPU copy while nothing is pending: the last copy-back, kept up
+        // to date by gmem_upload_changed. Written by the waiter thread before `pending` is released.
+        std::atomic<u64> mirror_bytes{0};
     };
     std::unordered_map<u8*, GmemBuf*> gmem_;
     std::atomic<u64> gmem_pending_max_{0};  // highest serial with GPU writes not yet copied back (fast check)
     std::vector<GmemBuf*> gmem_copyback_;  // written in the command buffer being recorded: copied back at submit
     VkDescriptorBufferInfo gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written);
     void gmem_upload(GmemBuf* gb, const u8* src, u64 bytes);
+    void gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes);  // only the blocks that differ from the mirror
 
 public:
     void gmem_record_copybacks();  // Recorder::flush, before the command buffer ends (g_before_submit_gmem)

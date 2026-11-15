@@ -662,6 +662,7 @@ static Buffer gmem_buffer(u64 bytes) {
 
 // Guest memory -> the device-local buffer: staged in the ring, copied on the GPU before the work that binds it.
 void VkRenderer::gmem_upload(GmemBuf* gb, const u8* src, u64 bytes) {
+    if (g_dtrace) hw_log("dtrace: upload %llx+%llx", (unsigned long long)(uintptr_t)src, (unsigned long long)bytes);
     Slice s = g_rec.stage(bytes, 16);
     memcpy(s.ptr, src, bytes);
     g_rec.cmd();
@@ -670,6 +671,57 @@ void VkRenderer::gmem_upload(GmemBuf* gb, const u8* src, u64 bytes) {
     g_rec.record([from, to, off, bytes](VkCommandBuffer cb) {
         VkBufferCopy c{off, 0, bytes};
         vkCmdCopyBuffer(cb, from, to, 1, &c);
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                           VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 1, &mb, 0, nullptr, 0, nullptr);
+    });
+}
+
+// The copy-back of a buffer the GPU wrote is itself a write to guest memory, so the next frame's bind finds the
+// range written and would upload it whole again: in a battle ~150 particle buffers (up to ~1 MB each, ~30 MB per
+// frame) went guest -> GPU -> guest every frame. Comparing with the mirror (the readback, equal to the GPU copy)
+// finds what the game itself changed since, at 4 KiB granularity; usually nothing.
+void VkRenderer::gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes) {
+    constexpr u64 kBlock = 4096;
+    u8* mirror = gb->readback.map;
+    std::vector<VkBufferCopy> regions;
+    u64 total = 0;
+    for (u64 off = 0; off < bytes;) {
+        u64 n = std::min(kBlock, bytes - off);
+        if (memcmp(src + off, mirror + off, n) == 0) {
+            off += n;
+            continue;
+        }
+        const u64 start = off;
+        for (off += n; off < bytes; off += n) {
+            n = std::min(kBlock, bytes - off);
+            if (memcmp(src + off, mirror + off, n) == 0) break;
+        }
+        regions.push_back({0, start, off - start});
+        total += off - start;
+    }
+    if (g_dtrace)
+        hw_log("dtrace: upload %llx+%llx changed %llu bytes in %zu runs", (unsigned long long)(uintptr_t)src,
+               (unsigned long long)bytes, (unsigned long long)total, regions.size());
+    if (regions.empty()) return;
+    Slice s = g_rec.stage(total, 16);
+    u64 at = 0;
+    for (VkBufferCopy& r : regions) {
+        // Guest -> mirror, then mirror -> staging: both get the same bytes even if the game writes meanwhile.
+        memcpy(mirror + r.dstOffset, src + r.dstOffset, r.size);
+        memcpy(s.ptr + at, mirror + r.dstOffset, r.size);
+        r.srcOffset = s.offset + at;
+        at += r.size;
+    }
+    g_rec.cmd();
+    const VkBuffer from = s.buf, to = gb->buf.buf;
+    g_rec.record([from, to, regions = std::move(regions)](VkCommandBuffer cb) {
+        vkCmdCopyBuffer(cb, from, to, (u32)regions.size(), regions.data());
         VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
@@ -724,8 +776,14 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
         // ordered on the queue after the work that used the previous contents.
         const int changed = tc_.written_since((u64)(uintptr_t)src, guest_bytes, gb->watch_epoch);
         if (changed != 0 || gb->uploaded_bytes != guest_bytes) {
-            gmem_upload(gb, src, guest_bytes);
-            gb->uploaded_bytes = guest_bytes;
+            if (gb->uploaded_bytes == guest_bytes && gb->readback.map &&
+                gb->mirror_bytes.load(std::memory_order_relaxed) >= guest_bytes) {
+                gmem_upload_changed(gb, src, guest_bytes);
+            } else {
+                gmem_upload(gb, src, guest_bytes);
+                gb->uploaded_bytes = guest_bytes;
+                gb->mirror_bytes.store(0, std::memory_order_relaxed);
+            }
         }
     }
     gb->last_use = serial;
@@ -735,6 +793,7 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
         if (gb->copyback_serial != serial) {  // one copy-back per command buffer, however many binds write it
             gb->copyback_serial = serial;
             if (gb->readback.size < gb->size) {
+                gb->mirror_bytes.store(0, std::memory_order_relaxed);
                 Buffer old = gb->readback;
                 if (old.buf) retire_resource([old]() mutable { destroy_buffer(old); });
                 gb->readback = create_buffer(gb->size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
@@ -743,6 +802,7 @@ VkDescriptorBufferInfo VkRenderer::gmem_bind(u8* src, u64 guest_bytes, u64 bytes
             g_rec.defer([gb, serial] {     // waiter thread, once it completed
                 if (gb->pending.load() != serial) return;  // written again later: that copy-back runs instead
                 memcpy(gb->host, gb->readback.map, gb->guest_bytes);
+                gb->mirror_bytes.store(std::min(gb->guest_bytes, gb->copyback_bytes), std::memory_order_relaxed);
                 gb->pending.store(0, std::memory_order_release);
             });
         }
@@ -754,7 +814,10 @@ void VkRenderer::gmem_record_copybacks() {
     if (gmem_copyback_.empty()) return;
     std::vector<std::tuple<VkBuffer, VkBuffer, VkDeviceSize>> copies;
     copies.reserve(gmem_copyback_.size());
-    for (GmemBuf* gb : gmem_copyback_) copies.emplace_back(gb->buf.buf, gb->readback.buf, gb->guest_bytes);
+    for (GmemBuf* gb : gmem_copyback_) {
+        copies.emplace_back(gb->buf.buf, gb->readback.buf, gb->guest_bytes);
+        gb->copyback_bytes = gb->guest_bytes;
+    }
     gmem_copyback_.clear();
     g_rec.cmd();
     g_rec.record([copies = std::move(copies)](VkCommandBuffer cb) {
