@@ -79,6 +79,9 @@ public:
     // The GPU thread is about to read this range as commands (a GPFIFO entry): wait until what shaders wrote there
     // (global memory, e.g. indirect draw arguments filled by a compute shader) is back in guest memory.
     virtual void sync_gpu_writes(u64 cpu_addr, u64 size) {}
+    // The GPU thread starts executing a guest submission: the point where results of finished GPU work may change
+    // guest memory (never in the middle of one).
+    virtual void begin_submission() {}
     // Whether the renderer holds GPU-modified data for this range (lets DMA copy GPU-side).
     virtual bool is_gpu_modified(u64 cpu_addr, u64 size) = 0;
 

@@ -1167,6 +1167,7 @@ static void execute_inner(Channel* ch, Submission& s) {
             break;
         }
     }
+    renderer()->begin_submission();
     std::vector<u32> buf;
     for (size_t ei = 0; ei < s.entries.size(); ei++) {
         const GpEntry& e = s.entries[ei];

@@ -327,6 +327,7 @@ static const DeviceFeature kDeviceFeatures[] = {
     {"storageBuffer16BitAccess", false, [](DeviceFeatures& f) { return &f.f11.storageBuffer16BitAccess; }},
     {"uniformAndStorageBuffer16BitAccess", false, [](DeviceFeatures& f) { return &f.f11.uniformAndStorageBuffer16BitAccess; }},
     {"shaderDrawParameters", false, [](DeviceFeatures& f) { return &f.f11.shaderDrawParameters; }},
+    {"shaderStorageImageWriteWithoutFormat", false, [](DeviceFeatures& f) { return &f.f2.features.shaderStorageImageWriteWithoutFormat; }},
 };
 
 // HWDER_MASK_FEATURES: "shaderFloat16,storageBuffer8BitAccess" -> treated as not offered (tests the checks above).

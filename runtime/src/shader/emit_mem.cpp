@@ -701,6 +701,27 @@ void Translator::emit_tex(Inst in, Op op) {
             if ((mask >> c) & 1) setF(dst++, component(*this, s, dc, c));
         return;
     }
+    case Op::SUST: {
+        // Image store. Encoding checked on the one FEW shader that uses it (d17e7155f43e7e87, a compute pass that
+        // averages 2x2 texels of the scene into a 640x360 image for a full-screen effect of strong attacks; while
+        // this was a no-op the image stayed black and so did the scene, for the effect's ~7 frames): data Rd..Rd+3
+        // (RGBA) with bit 23 set, integer coordinates from Ra, image type in 33-35 (3 = 2D), bit 51 = bound handle
+        // at bits 36-48 (x4, in the texture handle buffer). Other forms: not seen, logged and skipped.
+        const bool rgba = in.bit(23), bound = in.bit(51);
+        const u32 type = in.bits(33, 3);
+        if (!rgba || !bound || type != 3) {
+            log_once("SUST form unsupported (no-op): rgba " + std::to_string(rgba) + " bound " + std::to_string(bound) + " type " +
+                     std::to_string(type));
+            return;
+        }
+        Img& im = image2d(in.bits(36, 13) * 4);
+        const u32 d = in.bits(0, 8), creg = in.bits(8, 8);
+        Id image = b.op(spv::OpLoad, im.image_t, {im.var});
+        Id coord = b.op(spv::OpCompositeConstruct, b.t_vec(t_s32, 2), {b.bitcast(t_s32, R(creg)), b.bitcast(t_s32, R(creg + 1))});
+        Id texel = b.op(spv::OpCompositeConstruct, t_v4f, {F(d), F(d + 1), F(d + 2), F(d + 3)});
+        b.op0(spv::OpImageWrite, {image, coord, texel});
+        return;
+    }
     default:
         unsupported(op);
     }

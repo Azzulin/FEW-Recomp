@@ -880,7 +880,31 @@ static int runtime_main(int argc, char** argv) {
     hw_exit_process(0);
 }
 
+// hwder_env.txt in the working directory: NAME=VALUE lines (HWDER_* diagnostics) set before anything reads them.
+// For a session started by a launcher that cannot pass variables (a Steam shortcut that runs the executable itself).
+// Variables already in the environment win; '#' starts a comment line.
+static void load_env_file() {
+    FILE* f = fopen("hwder_env.txt", "r");
+    if (!f) return;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        size_t n = strlen(line);
+        while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = 0;
+        char* eq = strchr(line, '=');
+        if (line[0] == '#' || !eq || eq == line) continue;
+        *eq = 0;
+        if (getenv(line)) continue;
+#ifdef _WIN32
+        _putenv_s(line, eq + 1);
+#else
+        setenv(line, eq + 1, 0);
+#endif
+    }
+    fclose(f);
+}
+
 int main(int argc, char** argv) {
+    load_env_file();
 #ifdef _WIN32
     return runtime_main(argc, argv);
 #else

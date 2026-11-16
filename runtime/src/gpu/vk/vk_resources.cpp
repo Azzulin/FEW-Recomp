@@ -822,7 +822,10 @@ void VkRenderer::gmem_record_copybacks() {
         if (!rb.buf) rb = create_buffer(gb->size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
         const u64 n = gb->guest_bytes;
         copies.emplace_back(gb->buf.buf, rb.buf, n);
-        g_rec.defer([gb, rb, n, serial] { gmem_merge(gb, rb, n, serial); });
+        g_rec.defer([this, gb, rb, n, serial] {  // waiter thread: only queued, see gmem_apply_merges
+            std::lock_guard<std::mutex> l(gmem_done_m_);
+            gmem_done_.push_back({gb, rb, n, serial});
+        });
     }
     gmem_copyback_.clear();
     g_rec.cmd();
@@ -840,7 +843,23 @@ void VkRenderer::gmem_record_copybacks() {
     });
 }
 
-// Waiter thread, when command buffer `serial` completed: `rb` holds the first `n` bytes of the buffer as that command
+// The copy-backs of completed command buffers reach guest memory here, on the GPU thread and only between guest
+// submissions (begin_submission) or when a read needs them (gmem_sync), never while a submission is being recorded:
+// a particle draw takes its count from one buffer (indirect arguments) and its vertices from another, and a merge
+// landing between the two reads drew the count of one frame over the vertices of another. Uninitialised vertices
+// put NaNs in the HDR target and the whole 3D scene came out black for 2-3 frames (Steam Deck, 2026-11-16, with
+// frames overlapping: ~26 times in two minutes of battle).
+void VkRenderer::gmem_apply_merges() {
+    std::vector<GmemDone> done;
+    {
+        std::lock_guard<std::mutex> l(gmem_done_m_);
+        if (gmem_done_.empty()) return;
+        done.swap(gmem_done_);
+    }
+    for (const GmemDone& d : done) gmem_merge(d.gb, d.rb, d.n, d.serial);
+}
+
+// Command buffer `serial` completed: `rb` holds the first `n` bytes of the buffer as that command
 // buffer left them. A three-way merge per 32-bit word, with the mirror as the common ancestor:
 //  - the GPU did not change the word: nothing (whatever the game wrote since stays, and goes up at the next bind);
 //  - the GPU changed it and the game did not: the new value goes to guest memory;
@@ -890,6 +909,7 @@ void VkRenderer::gmem_merge(GmemBuf* gb, Buffer rb, u64 n, u64 serial) {
 }
 
 void VkRenderer::gmem_sync(u64 addr, u64 size) {
+    gmem_apply_merges();
     if (gmem_pending_max_.load(std::memory_order_acquire) <= g_s.completed.load()) return;
     u64 wait = 0;
     for (const auto& [host, gb] : gmem_) {
@@ -904,6 +924,7 @@ void VkRenderer::gmem_sync(u64 addr, u64 size) {
                (unsigned long long)syncs);
     g_rec.flush();
     wait_completed(wait);
+    gmem_apply_merges();
 }
 
 }  // namespace gpu::vk::detail

@@ -10,7 +10,7 @@
 #            DECK_INPUT=tools/input/battle_long.txt  roteiro de entrada (HWDER_INPUT_SCRIPT), copiado para o Deck
 #            DECK_FRESH=1  começa com save vazio: o save do Deck é guardado antes e volta no fim (o do teste some)
 #            DECK_ENV="HWDER_THREAD_STATS=1 ..."  variáveis extras para o jogo
-#            DECK_SERIAL=1  sem a sobreposição de quadros (HWDER_FRAME_OVERLAP), que o lançador do Deck liga
+#            DECK_SERIAL=1  sem a sobreposição de quadros (HWDER_FRAME_OVERLAP), que o hwder_env.txt do Deck liga (com ele no Deck, renomeie-o para medir em série)
 #            DECK_PACE=1  liga HWDER_PACE_TRACE, traz as linhas "pace:" para build/deck_pace.log e resume o fps por
 #                         janela de 20 s com tools/pace_summary.py
 #

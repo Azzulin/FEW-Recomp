@@ -21,8 +21,8 @@ namespace gpu::warmup {
 namespace {
 constexpr u64 kHashSeed = 14695981039346656037ull;
 constexpr u64 kHashPrime = 1099511628211ull;
-constexpr u32 kVersion = 4;  // 2: global memory (storage buffers from c0 descriptors); 3: structured control flow;
-                             // 4: warp ops within 32 lanes on 64-wide subgroups
+constexpr u32 kVersion = 5;  // 2: global memory (storage buffers from c0 descriptors); 3: structured control flow;
+                             // 4: warp ops within 32 lanes on 64-wide subgroups; 5: SUST (image stores)
 constexpr size_t kHeaderBytes = 40;
 constexpr u8 kMagic[8] = {'H', 'W', 'D', 'P', 'W', 'M', '0', '1'};
 

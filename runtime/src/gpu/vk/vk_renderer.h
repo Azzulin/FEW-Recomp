@@ -505,8 +505,12 @@ public:
         tc_.flush(addr, size);
         gmem_sync(addr, size);
     }
+    void begin_submission() override {
+        std::lock_guard<std::recursive_mutex> l(m_);
+        gmem_apply_merges();
+    }
     void sync_gpu_writes(u64 addr, u64 size) override {
-        if (!addr || !size || gmem_pending_max_.load(std::memory_order_acquire) <= g_s.completed.load()) return;
+        if (!addr || !size) return;
         // NVN's indirect draws (the battle's GPU particles) take their arguments from memory a compute shader wrote just
         // before. Waiting here for that work and its copy back drained the GPU about twice per battle frame and held
         // the command thread idle half the time (2026-11-14: dense battle 30 -> 55-60 fps without it). The arguments
@@ -614,6 +618,14 @@ private:
     VkDescriptorBufferInfo gmem_bind(u8* src, u64 guest_bytes, u64 bytes, bool written);
     void gmem_upload_changed(GmemBuf* gb, const u8* src, u64 bytes, const std::vector<u64>* pages);
     static void gmem_merge(GmemBuf* gb, Buffer rb, u64 n, u64 serial);
+    struct GmemDone {
+        GmemBuf* gb;
+        Buffer rb;
+        u64 n, serial;
+    };
+    std::mutex gmem_done_m_;
+    std::vector<GmemDone> gmem_done_;  // copy-backs of completed command buffers, in order, not yet merged
+    void gmem_apply_merges();          // m_ held, GPU thread
 
 public:
     void gmem_record_copybacks();  // Recorder::flush, before the command buffer ends (g_before_submit_gmem)

@@ -3,18 +3,26 @@
 Atualizado em 2026-11-15. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
 atualize ao terminar uma sessão.
 
-## Retomar aqui (2026-11-15, noite)
+## Retomar aqui (2026-11-16)
 
 Objetivo do dono: batalha a 30 fps **estáveis no Steam Deck com as partículas ligadas** ("não quero comprometer o
 jogo pela estabilidade"). Nada de desligar efeito (`HWDER_GMEM=0` não é solução).
 
-**Atingido na medição**: com a sobreposição de quadros ligada (agora o padrão do lançador do Deck), a luta densa do
-`battle_long.txt` fica em **29,8–30,0 fps em todas as janelas** (mediana 33,3 ms, p99 ~40 ms); em série, o mesmo
-build dá 24–29 fps. Detalhes na seção "Sessão de 2026-11-15 (noite)".
+Estado: com a sobreposição de quadros, a luta densa do `battle_long.txt` mede **29,8–30,0 fps** no Deck (em série,
+24–29). A **tela preta nos ataques fortes** que o dono viu jogando foi corrigida (`SUST`, seção "Sessão de
+2026-11-16") e conferida no PC; **falta o dono confirmar no Deck**, e dizer como ficou o jogo com a sobreposição
+(ele só tinha jogado em série, ver abaixo).
 
-Falta **o dono jogar no Deck** e dizer se algo saiu diferente (partículas, cutscenes, vídeos, menus): a medição é
-com a janela oculta e o roteiro cego, e a conferência visual das partículas com a sobreposição foi feita só no PC.
-Se algo estranhar, `FEW_SERIAL=1 %command%` nas opções de inicialização da Steam volta ao modo em série.
+**A Steam do Deck abre o `few` direto, não o `few-steam.sh`** (visto em `/proc/<pid>/environ` e na linha do
+`reaper`): nada que o lançador exporta chegava ao jogo. Por isso as variáveis agora ficam em **`hwder_env.txt`** na
+pasta do jogo, lido pelo próprio `few` (`core.cpp load_env_file`). O do Deck tem `HWDER_FRAME_OVERLAP=1`; apagar a
+linha volta ao modo em série. Diagnósticos de uma sessão jogada entram ali também.
+
+**Como trabalhar com o dono em bugs que ele vê jogando**: ele joga, o agente arma a captura antes e lê depois; nada
+de rodar testes longos no Deck sem pedir. Receita que achou a tela preta: `HWDER_FILMSTRIP=film`,
+`HWDER_FILMSTRIP_BATTLE=0`, `HWDER_FILMSTRIP_FOR=150`, `HWDER_DRAWLOG=1` no `hwder_env.txt` (criar a pasta `film`);
+depois, por SSH, achar os quadros escuros nas miniaturas (`f_<n>.raw`, RGBA 96×54) e comparar no `drawlog.txt` os
+programas que só aparecem neles. Antes de pedir ao dono, tente reproduzir no PC com `-Ini "fps60=0;fps30_720p=1"`.
 
 Passo a passo para medir de novo:
 
@@ -474,7 +482,7 @@ linhas, procurando sobreposição de faixas `w`/`r`.
 ## Sessão de 2026-11-15 (noite): sobreposição de quadros com a memória global inteira
 
 Os dois problemas que seguravam a `HWDER_FRAME_OVERLAP` foram resolvidos ou explicados, e a opção passou a ser o
-padrão do lançador do Deck (`few-steam.sh`; `FEW_SERIAL=1` desliga). No PC continua desligada por padrão.
+padrão do Deck (hoje pelo `hwder_env.txt`, ver "Retomar aqui"). No PC continua desligada por padrão.
 
 Como funciona: o jogo só entrega o quadro N+1 depois que os syncpoints do quadro N disparam, e o runtime só os
 dispara quando a GPU termina o quadro N (`on_gpu_idle`). Com a opção, eles disparam quando o quadro N está gravado
@@ -533,6 +541,35 @@ argumentos de draw indireto) chegam um quadro mais tarde; nas primeiras apariç�
 indiretos ainda leem memória não escrita e são descartados pela rede de segurança (`3d: indirect macro … skipped`,
 8 de 934 numa execução; em série também acontece).
 
+## Sessão de 2026-11-16: tela preta nos ataques fortes (`SUST`)
+
+Sintoma (dono, no Deck): ao usar habilidades a tela pisca preta e volta. Nas miniaturas (`HWDER_FILMSTRIP`): a
+cena 3D sai preta por ~7 quadros com o HUD normal, a cada ataque forte (X). Reproduz no PC com 30 fps a 720p
+(34 vezes em 2 minutos) e no modo Desempenho (60 fps a 720p); **não** no Qualidade a 1080p. Com ou sem sobreposição.
+
+Causa: nesses quadros um passo de tela cheia (programa `f3a332122ff3ad54`) mistura a cena com uma imagem 640×360
+que nenhum draw escreve. Quem a escreve é o shader de cálculo `d17e7155f43e7e87` (média de 2×2 texels da cena) com
+`SUST`, escrita em imagem, que o tradutor tratava como no-op: a imagem ficava preta.
+
+Correção: `SUST` no tradutor (`emit_mem.cpp`, `Translator::image2d` em `program.cpp`): forma com handle fixo
+(bit 51, índice nos bits 36–48 ×4 no buffer de handles de textura), dados RGBA em Rd..Rd+3 (bit 23), coordenadas
+inteiras em Ra, tipo 2D (bits 33–35 = 3). Imagem de armazenamento sem formato no tipo
+(`StorageImageWriteWithoutFormat`, recurso `shaderStorageImageWriteWithoutFormat` pedido em `display.cpp`); o
+renderer já ligava `Resources::images`. Outras formas logam `SUST form unsupported`. `kVersion` do
+`pipeline_warmup.bin` foi para 5. Conferido no PC: 0 quadros pretos em ~65 s de luta com ~30 ataques fortes.
+O `TEX` com AOFFI não constante do mesmo shader continua (os quatro toques do filtro usam deslocamento vindo de
+registrador; o `spirv-val` reclama, as GPUs aceitam).
+
+Também nesta sessão:
+
+- **Fusão de `gmem` só entre submissões** (`gmem_apply_merges`, chamada por `Renderer::begin_submission` e por
+  `gmem_sync`): a thread de espera só enfileira as cópias de volta concluídas; a thread da GPU as funde na memória
+  do guest no começo de cada submissão do jogo. Antes a fusão podia cair no meio da gravação de um quadro (contagem
+  de um quadro, vértices de outro). Foi feita como hipótese para a tela preta, que não era isso; fica porque é o
+  comportamento certo. Custo: a comparação (~4 ms no Deck) passou para a thread da GPU. **Não medido de novo no
+  Deck**: se a luta densa cair dos 30 fps, é o primeiro suspeito.
+- `hwder_env.txt` (acima) e `HWDER_TIMELINE=<s>,<duração>`.
+
 ## Pendências, por prioridade
 
 1. **Batalha densa a 30 fps no Deck com as partículas**: medida em 29,8–30,0 fps com a sobreposição. Falta o dono
@@ -551,7 +588,7 @@ indiretos ainda leem memória não escrita e são descartados pela rede de segur
    despacho pequeno converte `{contagem, instâncias, primeiro, instância base}` no comando indexado). Exige também
    os vértices das partículas vindos do buffer da GPU, não da cópia no guest.
 4. **O que falta da memória global**: atômicos INC/DEC, CAS, 64 bits e float; base dos descritores nos estágios
-   gráficos (não conferida); `SUST` (escrita em imagem, no-op), `AL2P` + `IPA` indexado, `TEX` com AOFFI não
+   gráficos (não conferida); `SUST` fora da forma 2D com handle fixo, `AL2P` + `IPA` indexado, `TEX` com AOFFI não
    constante (o único programa que falha no `spirv-val`). Todos logam uma vez com `[shader]`.
 5. **Escala de resolução > 1x**: travada em 1x (`texture_cache.cpp res_scale_allowed`). Em 2x a composição cobre
    só o quadrante superior esquerdo. Diagnóstico provável, não confirmado: passes (compute, ou fetches a partir de

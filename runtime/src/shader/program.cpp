@@ -360,6 +360,23 @@ Translator::Tex& Translator::texture(u32 cbuf_offset, TextureType type, bool dep
     return textures.back();
 }
 
+Translator::Img& Translator::image2d(u32 cbuf_offset) {
+    for (auto& i : images)
+        if (i.cbuf_offset == cbuf_offset) return i;
+    Img i{};
+    i.cbuf_index = env.texture_bound_buffer();
+    i.cbuf_offset = cbuf_offset;
+    // Written only, in whatever format the bound image has (the renderer's view): no format in the type.
+    b.capability(spv::CapabilityStorageImageWriteWithoutFormat);
+    i.image_t = b.type(spv::OpTypeImage, {t_f32, u32(spv::Dim2D), 0u, 0u, 0u, 2u, u32(spv::ImageFormatUnknown)});
+    i.var = b.id();
+    b.put(b.globals, spv::OpVariable,
+          {b.t_ptr(spv::StorageClassUniformConstant, i.image_t), i.var, u32(spv::StorageClassUniformConstant)});
+    b.decorate(i.var, spv::DecorationNonReadable);
+    images.push_back(i);
+    return images.back();
+}
+
 // ----------------------------------------------------------------------------- prologue/epilogue
 
 void Translator::prologue() {
@@ -494,6 +511,16 @@ void Translator::finish_program() {
         use.cbuf_offset = t.cbuf_offset;
         use.count = 1;
         prog.resources.textures.push_back(use);
+    }
+    for (auto& i : images) {  // storage images: after the textures (vk_pipelines.cpp set layout order)
+        b.decorate(i.var, spv::DecorationDescriptorSet, {set});
+        b.decorate(i.var, spv::DecorationBinding, {binding++});
+        ImageUse use{};
+        use.type = TextureType::Tex2D;
+        use.cbuf_index = i.cbuf_index;
+        use.cbuf_offset = i.cbuf_offset;
+        use.is_written = true;
+        prog.resources.images.push_back(use);
     }
     prog.uses_discard = uses_discard;
 

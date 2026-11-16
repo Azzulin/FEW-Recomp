@@ -168,6 +168,13 @@ public:
     };
     std::vector<Tex> textures;
     Tex& texture(u32 cbuf_offset, TextureType type, bool depth);
+    // Storage images (SUST): the handle is read like a bound texture's, at c[texture_bound_buffer][cbuf_offset].
+    struct Img {
+        u32 cbuf_index, cbuf_offset;
+        Id var, image_t;
+    };
+    std::vector<Img> images;
+    Img& image2d(u32 cbuf_offset);
 
     // io
     Id in_generic[32] = {}, out_generic[32] = {}, in_generic_t[32] = {};
