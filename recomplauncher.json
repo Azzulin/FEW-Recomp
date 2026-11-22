@@ -1,0 +1,14 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Fire Emblem Warriors Recomp",
+  "start": {
+    "program": ["Jogar no PC/few.exe"]
+  },
+  "saves": ["{install}/Jogar no PC/save"],
+  "folders": {
+    "saves": [{ "path": "{install}/Jogar no PC/save" }],
+    "logs": [{ "path": "{install}/Jogar no PC" }]
+  },
+  "exit_codes": { "0": "ok" }
+}
