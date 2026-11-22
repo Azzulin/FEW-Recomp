@@ -1,9 +1,30 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-15. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
+Atualizado em 2026-11-19. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
 atualize ao terminar uma sessão.
 
 ## Retomar aqui (2026-11-16)
+
+**Build `8d32b02d…` enviado ao Deck em 2026-11-19 às ~21:50** (SHA-256 conferido): o de `465354ac…` mais o
+descarte de quadros só com limitador detectado (ver "Jogatina de 19/11 à noite" em "Sessão de 2026-11-19"). **Falta
+a partida de teste do dono** (passos 4 e 5): na de 19/11 ele não alternou o F1, então não há comparação 720p × 630p.
+
+1. Conferir o SSH e que não há jogo aberto: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> 'pgrep -a few'`
+   (sem saída = livre). Se não responder, procurar o IP (DHCP) com `Get-NetNeighbor` no PowerShell.
+2. Gerar com `.\gerar-deck.ps1` antes de enviar: o `few` de `Envio Deck` foi apagado em 2026-11-20 para liberar
+   espaço (o do Deck é o `8d32b02d…`). Enviar com
+   `ARQUIVOS="few few-steam.sh" bash tools/deck/enviar-para-deck.sh` (confere o SHA-256).
+3. Ligar a opção no `.ini` do Deck sem tocar no resto (o `few-steam.sh` novo também acrescenta a chave se faltar):
+   na pasta do jogo, `grep -q '^res_630p=' hwder_settings.ini || echo res_630p=1 >> hwder_settings.ini` (o
+   arquivo pode terminar sem quebra de linha: confira com `tail -c 1`).
+4. Pedir ao dono uma partida de teste: **limitador de fps da Steam desligado** (ele usava 30/40, o que antes
+   deixava a batalha em câmera lenta), modo Desempenho (já escolhido no menu do jogo), e na batalha alternar F1 →
+   "Lower 3D resolution (1120x630)" (~1 min ligada, ~1 min desligada).
+5. Depois, ler pelo journal (`journalctl --user -S "<início>" -o short-iso | grep -F "[hwder]"`) as linhas
+   `display: 300 frames` (fps, `limiter`, `N not shown`), `gpu thread busy` e `few: 3D resolution configuration`,
+   comparando os trechos 1280×720 e 1120×630. Resumo por janela: `python tools/deck/resumo_journal.py journal.txt`.
+   Esperado: `limiter` perto de 0 nos trechos pesados, `not shown` 0 sem o limitador da Steam (em 19/11 eram até
+   65 de 300) e, com ele ligado, `(host frame limiter)` no fim da linha e a batalha na velocidade normal.
 
 Objetivo do dono: batalha a 30 fps **estáveis no Steam Deck com as partículas ligadas** ("não quero comprometer o
 jogo pela estabilidade"). Nada de desligar efeito (`HWDER_GMEM=0` não é solução).
@@ -13,10 +34,17 @@ Estado: com a sobreposição de quadros, a luta densa do `battle_long.txt` mede 
 2026-11-16") e conferida no PC; **falta o dono confirmar no Deck**, e dizer como ficou o jogo com a sobreposição
 (ele só tinha jogado em série, ver abaixo).
 
-**A Steam do Deck abre o `few` direto, não o `few-steam.sh`** (visto em `/proc/<pid>/environ` e na linha do
-`reaper`): nada que o lançador exporta chegava ao jogo. Por isso as variáveis agora ficam em **`hwder_env.txt`** na
-pasta do jogo, lido pelo próprio `few` (`core.cpp load_env_file`). O do Deck tem `HWDER_FRAME_OVERLAP=1`; apagar a
-linha volta ao modo em série. Diagnósticos de uma sessão jogada entram ali também.
+**A Steam do Deck abria o `few` direto, não o `few-steam.sh`** (visto em `/proc/<pid>/environ` e na linha do
+`reaper`): o dono jogava por uma entrada "few" que adicionou à mão no Modo Jogo, cujo seletor de arquivos não
+mostra `.sh`. Em 2026-11-17 essa entrada saiu da Steam; sobrou só "Fire Emblem Warriors" (appid <appid>, criada
+pelo `instalar-no-deck.sh`, com arte), que abre o `few-steam.sh`. Para recriar: `sh instalar-no-deck.sh --yes` na
+pasta do jogo (por SSH também; fecha a Steam, que no Modo Jogo reabre sozinha). A capa vinha do Hyrule Warriors
+(endereço da loja da Nintendo herdado do HWDER); agora sai de `game_profile.STORE_ART`. Imagens já presentes em
+`config/grid/<appid>*` são mantidas: para trocar, apague-as antes (as do HWDE estão em `~/few-arte-hwde` no Deck).
+O `setup_ui` e o `linux_setup.py` (instaladores do HWDER, sem uso no FEW) ainda têm nome e arte do HWDE. As variáveis continuam em
+**`hwder_env.txt`** na pasta do jogo, lido pelo próprio `few` (`core.cpp load_env_file`), então valem por qualquer
+entrada. O do Deck tem `HWDER_FRAME_OVERLAP=1`; apagar a linha volta ao modo em série. Diagnósticos de uma sessão
+jogada entram ali também.
 
 **Como trabalhar com o dono em bugs que ele vê jogando**: ele joga, o agente arma a captura antes e lê depois; nada
 de rodar testes longos no Deck sem pedir. Receita que achou a tela preta: `HWDER_FILMSTRIP=film`,
@@ -541,6 +569,139 @@ argumentos de draw indireto) chegam um quadro mais tarde; nas primeiras apariç�
 indiretos ainda leem memória não escrita e são descartados pela rede de segurança (`3d: indirect macro … skipped`,
 8 de 934 numa execução; em série também acontece).
 
+## Sessão de 2026-11-19: jogatina de 18/11 à noite no Deck, ritmo de quadros
+
+O dono jogou em 18/11, das 23:20 às 23:59 (duas execuções, journal guardado no PC só durante a sessão). Sem
+`stall:`, sem submissão lenta nos quadros 600×n (a gravação do cache de pipelines fora da thread da GPU funcionou) e
+o **F2 funcionou** (18 trocas). Ele passou ~30 min no modo 60 fps.
+
+**Limitador de quadros da Steam deixava o jogo em câmera lenta.** De 23:29 em diante todo `present` esperava ~33 ms no
+`vkAcquireNextImageKHR` (às vezes 25 ou 40 ms), também nos menus, depois de desligar o F2 e na segunda execução: era
+o limitador do gamescope (menu de desempenho da Steam), não o jogo. Com `vsync=1` (FIFO), o `acquire` bloqueava o
+compositor, e como o jogo avança a lógica por quadro liberado, a batalha a 60 fps rodou **na metade da velocidade**
+por ~20 min (e a 2/3 com o limite em 40). As ~48 mil linhas `display: slow: swapchain fence wait` e os `present took
+70–200 ms` (`acquire` estourando os 100 ms, perto dos toques no F2, provavelmente com o menu da Steam aberto) eram
+isso. Correção (`display.cpp present_image`): o `acquire` espera no máximo até o próximo slot de liberação (menos
+2 ms); passado isso o quadro **não é mostrado** e o buffer volta ao jogo na hora, que mantém a velocidade. O resumo de
+300 quadros ganhou `N not shown, N acquires over 20 ms`, e a primeira vez loga `display: the host shows frames slower
+than the game`. Aviso por linha só acima de 50 ms.
+
+**`frame_limit` segurava o quadro seguinte a um atrasado** (código do HWDER v0.3.5). O teste de atraso comparava com
+um período a partir do slot anterior (todo quadro de 17+ ms contava como "travada") e o reancoramento punha a grade
+um passo à frente, então o quadro seguinte esperava até 33 ms depois do atrasado (66 ms no intervalo 2). Com o
+limitador desligado (23:57–23:59) a batalha a 60 fps fez 44–57 fps, 20–50% dos quadros acima de 20 ms, com o
+compositor **dormindo ~10 ms por quadro** mesmo abaixo de 60: sintoma disso. Agora o quadro é devido um passo depois
+do slot anterior, atraso de até um período mantém a grade e só mais que isso reancora em `now`. Simulação com o
+jogo preso à liberação (`jogo` = tempo do jogo por quadro):
+
+| Jogo | Antes | Agora |
+|---|---|---|
+| 15–19 ms (modo 60) | 40,6 fps | 56,1 fps |
+| 60% 12–16 ms, 40% 17–25 ms | 43,5 fps | 55,8 fps |
+| 20–30 ms (modo 30, intervalo 2) | 21,6 fps | 30,0 fps |
+
+No PC (`battle_long`, 60 fps a 720p, `build/pc_pacefix_pace.log`): 0 quadros descartados, 0 `acquire` acima de
+20 ms, luta leve com 91,5% dos quadros até 20 ms. O fps por janela não serve de comparação: houve de novo as
+travadas de 300–400 ms do PC de teste (o jogo fica ~400 ms sem entregar quadro, sem esperar buffer nem `acquire`),
+~6 a cada 20 s. **Enviado ao Deck** (`5f7caf51…`, SHA-256 conferido); **falta medir no Deck**: o resumo de 300
+quadros da batalha a 60 fps deve mostrar `limiter` perto de 0 nos trechos pesados e menos quadros acima de 20 ms.
+
+**Opção "Lower 3D resolution (1120x630)"** (`res_630p`, `settings.h res_630p`, pedido do dono, que prefere
+desempenho a qualidade). O gancho `DynRes_Update` prendia cada grupo da resolução dinâmica no maior degrau; com a
+opção, o grupo do Desempenho (ids 3–4) fica no degrau 4, 1120×630 (~23% menos pixels no 3D; o HUD continua em
+1280×720). Vale no modo Desempenho e no "720p at 30 fps", na hora (o jogo chama a função todo quadro); loga
+`few: 3D resolution configuration 4 (1120x630)`. **Ligada por padrão no Deck** (`.ini` do `gerar-deck.ps1`,
+`few-steam.sh`, `testar-no-deck.sh`). No PC (`build/pc_r630_pace.log`, `build/shots/r630b_*.png`): imagem inteira,
+HUD nítido, luta densa ~59 fps. O tamanho dos alvos não foi conferido direto (vem da tabela do jogo em `few.md`).
+O dono jogava com o modo Desempenho escolhido no menu do próprio jogo (log: `few: display mode 1` sem conversão),
+então o F2 não mudava nada na batalha. Build `465354ac…` gerado; **não enviado** (o Deck suspendeu): enviar com
+`ARQUIVOS="few few-steam.sh"` e acrescentar `res_630p=1` ao `hwder_settings.ini` do Deck.
+
+**Jogatina de 19/11 à noite (20:41–20:51, build `465354ac…`, journal em `build/journal_1119b.txt`).** Batalha no
+modo 60 fps a 1120×630 o tempo todo (ele não alternou o F1), limitador da Steam desligado (`0 acquires over 20
+ms` em todas as janelas): a câmera lenta acabou e o `limiter` caiu para 0–5 ms nos trechos pesados, então o
+`frame_limit` corrigido funciona. Luta leve a 58–60 fps; densa a 38–48 (`gpu thread busy` 10–14 ms, 100–230
+despachos por quadro), 25–64% dos quadros acima de 20 ms. Mas **o jogo descartava quadros prontos sem limitador**
+(até 65 de 300, junto com os quadros atrasados): o prazo do `acquire` era o slot seguinte ao do quadro, e um quadro
+atrasado 10–16 ms ficava com 1–3 ms, menos que a espera normal do gamescope (até um vblank). Correção
+(`display.cpp present_image`): o descarte só vale com o **limitador do host detectado** (com a GPU já em dia com os
+presents anteriores, um `acquire` acima de 20 ms ou estourado soma 3, um abaixo de 2 ms tira 1; liga em 15, desliga
+em 0) e, nesse modo, o prazo mínimo é 4 ms; fora dele o `acquire` espera até 100 ms como antes. Loga a entrada e a
+saída do modo, e a linha de 300 quadros termina com `(host frame limiter)` enquanto ele vale. Sem teste com o
+limitador ainda. Também 786 `vk: slow: wait_serial took 30–60 ms`: são da thread que aposenta os command buffers
+(`waiter_thread`), esperando a GPU com a sobreposição de quadros; não seguram o jogo.
+
+Outros pontos do log: `nvdrv` `0xc0400001` (submit de canal, vídeo) leva ~15 ms nas cutscenes em vídeo; ~1 draw por
+quadro cai num buffer já apresentado (`vk: N draws into already-presented buffers`), não investigado.
+
+## Sessão de 2026-11-18 (tarde): engasgos periódicos na batalha (Deck)
+
+O dono jogou de novo (18/11, 17:51–18:03) e o travamento da cutscene **não se repetiu** (nenhuma linha `stall:`).
+Batalha travada em 30 fps (33,3 ms de média), menus e cutscenes a 60. Sobravam engasgos: um quadro de 150–190 ms a
+cada 10–20 s, e 0,75 s e 1,6 s uma vez cada. Todos vinham de `gpu: submission on syncpt 1 took 120–170 ms` mesmo
+com 11–25 entradas, e caíam **exatamente nos quadros múltiplos de 600** (`vk: frame 601, 1201, …`), quando
+`save_pipeline_cache()` roda: se algum pipeline novo apareceu desde a última vez, ele lia o cache inteiro do driver
+(`vkGetPipelineCacheData`) e gravava no cartão SD **na thread da GPU**. Os múltiplos de 600 sem pipeline novo não
+engasgavam.
+
+Correção (`vk_renderer.h save_pipeline_cache`): leitura e gravação numa thread à parte (uma por vez), num
+`pipeline_cache.bin.tmp` trocado no fim (fechar o jogo no meio não deixa arquivo pela metade). No PC
+(`HWDER_CACHE_PROFILE=1`): leitura 16–34 ms + disco 18–57 ms por gravação, agora fora da thread da GPU; nenhuma
+submissão lenta nos quadros 600×n. Enviado ao Deck (SHA-256 conferido); **falta o dono jogar e conferir** que os
+`submission on syncpt 1 took` nos quadros 600×n sumiram.
+
+**F2: batalhas a 60 fps na hora** (`overlay::toggle_battle_60fps`, pedido do dono): alterna `fps60`, salva o `.ini`,
+loga `few: 60 fps battles on/off (F2)` e mostra um aviso de 2,5 s no canto. Vale na hora porque o jogo chama
+`Display_SetMode` todo quadro e o gancho lê a opção a cada chamada (o texto do menu dizia "no próximo início"). No
+Deck os dois modos renderizam a 1280×720 (`fps30_720p`), então a troca é só de ritmo. F1 já era o menu. O Deck não
+tem teclado: mapear um botão traseiro para F2 no layout da Steam. **Não testado com a tecla** (o teste sem
+supervisão não aperta teclas): só compilado e aberto no PC; falta o dono apertar e conferir.
+
+## Sessão de 2026-11-18: travamento em tela preta numa cutscene (Deck)
+
+Sintoma (dono, sessão de 17/11 das 21:51 às 23:36): ao chegar numa cutscene o jogo ficou numa tela preta e não
+voltou; ele fechou depois de ~1 min. O `hwder.log` do Deck é sobrescrito a cada execução, mas **o journal guarda
+tudo** (a Steam joga a saída do jogo nele):
+`journalctl --user -S "<início>" -U "<fim>" -o short-iso | grep -F "[hwder]"` por SSH. Os intervalos longos no meio
+da sessão (32, 27 e 9 min) terminam em `vk: slow: present took 840 ms`: é o Deck suspenso e retomado.
+
+O que o log mostra:
+
+- **Travamento final (23:35:40)**: batalha normal até ali (30 fps), uma leitura de RomFS às 23:35:44 e depois
+  **nada** até `window closed` às 23:36:36. Nenhuma linha `hang:` nem `vi: frame fence … not reached`: o compositor
+  não tinha quadro na fila, então o jogo parou de entregar quadros por conta própria. Ou uma thread do jogo esperava
+  algo que não veio, ou o jogo esperava a GPU ficar ociosa (comum na troca de cena) com a thread da GPU presa. O
+  vigia antigo (`gpu::dump_hang_state`) só rodava a partir da espera do compositor, então o log não diz qual.
+  **Causa ainda não achada.**
+- **Parada de 9,5 s às 21:54:40, logo antes de outra cutscene (vídeo)**: a thread da GPU passou 1,1 s, 1,1 s e 7,2 s
+  em três despachos de cálculo; o número de shaders subiu de 190 para 195 nesse trecho, com 5 despachos lentos. É a
+  compilação de shaders de cálculo novos (as partículas de ~12 mil instruções) no ACO, feita na thread da GPU antes
+  de gravar o despacho. Nessa sessão o `pipeline_warmup.bin` era incompatível (`kVersion` 5 do `SUST`) e tudo foi
+  compilado de novo. Da segunda vez em diante o cache de pipelines (`pipeline_cache.bin`, gravado ao fechar; cresceu
+de 3,6 para 4,4 MB nessa sessão) e o cache em disco do Mesa devem evitar a espera (não medido).
+
+Feito nesta sessão (diagnóstico, para a próxima vez que acontecer):
+
+- **Relatório de travamento** (`runtime/src/stall_watch.cpp`, sempre ligado, `HWDER_STALL_DUMP=<s>`, padrão 5, `0`
+  desliga): se o jogo passa 5 s sem entregar quadro (QueueBuffer), loga linhas `stall:` com o estado da GPU
+  (`hang:`), a fila do vi e o que o compositor faz, cada thread do jogo (no que está parada: `mutex`, `condvar`,
+  `address` ou o tipo do objeto do WaitSynchronization, com endereço/handle e há quanto tempo) e a pilha do host de
+  todas as threads do jogo e do runtime (GPU, gravação, espera, compositor). De novo aos 30 s; `stall: frames
+  resumed` quando volta.
+- **Pilha de outra thread** (`runtime/src/host/stack.cpp`): no Linux um sinal (`SIGRTMIN+6`, por `tgkill`) para a
+  thread, que roda `backtrace()` no tratador e espera ali enquanto a pilha é varrida; no Windows,
+  `SuspendThread` + `RtlVirtualUnwind` (o código que era do `HWDER_THREAD_DUMP`). Conferido num teste isolado no
+  WSL com o toolchain do Deck (thread bloqueada, thread girando, thread que já saiu). Funções do jogo aparecem como
+  `f_<endereço>`; quadros sem nome exportado como `few+0x<offset>`, para `addr2line -f -e
+  /root/few/build-deck/few 0x<offset>` no WSL (o mesmo build que foi para o Deck).
+- `HWDER_THREAD_DUMP` usa o mesmo despejo e agora funciona no Linux (antes só listava "started/exited").
+- Compilação de programa de cálculo marcada (`hang:` mostra `building a compute program`) e medida:
+  `vk: slow: compute program <chave> took N ms (pipeline creation N ms; …)` acima de 50 ms.
+
+Próximo passo: o dono joga de novo até a mesma cutscene (ou até travar); depois, ler as linhas `stall:` no journal
+ou no `hwder.log` e corrigir pela pilha. Se o travamento for a thread da GPU compilando, a saída é compilar os
+programas de cálculo fora dela (como os gráficos, de forma assíncrona) ou pré-aquecer pelo `pipeline_warmup.bin`.
+
 ## Sessão de 2026-11-16: tela preta nos ataques fortes (`SUST`)
 
 Sintoma (dono, no Deck): ao usar habilidades a tela pisca preta e volta. Nas miniaturas (`HWDER_FILMSTRIP`): a
@@ -599,6 +760,17 @@ Também nesta sessão:
 7. **Nomes do save**: o jogo grava `system` e `scenario0` em `save/0100F15003E64000/<usuário>/`. Ajustar
    `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
 8. **Steam Deck: medição** como a do HWDER (fora deste repositório).
+9. **Compilar sem as NSPs no PC** (tarefa futura, pedida pelo dono para quando o jogo estiver estável e otimizado:
+   ele quer arquivar as NSPs na nuvem e liberar ~20 GB do PC). Hoje o `gerar-few.ps1` exige a NSP da base e a do
+   update em `Game Files` mesmo com `-SoBuild` (seção "entradas" e o `nsp_path` do `.ini`), e o `gerar-deck.ps1`
+   exige a base porque refaz os hardlinks de `Envio Deck`. Plano: com `-SoBuild`, compilar sem NSP (o C está em
+   `generated\`, o update extraído em `data\update`) e manter o `.ini` de `Jogar no PC` como está; no
+   `gerar-deck.ps1`, sem NSP, montar só o `few` e os scripts, e enviar com `ARQUIVOS="few few-steam.sh"` (o Deck
+   já tem NSPs, chaves e update no cartão). Avisar claramente que sem as NSPs não há como jogar no PC, rodar o
+   `run_test.ps1` (testes passam a ser no Deck, pedindo antes) nem gerar o C do zero (precisa da NSP do update).
+   Lembrar o dono: base e DLCs são hardlinks em `Game Files` e `Envio Deck`; o espaço só volta apagando as duas
+   pastas. Extrair o RomFS para pasta não economiza (o conteúdo não é comprimido na NSP); a única economia de
+   conteúdo é dispensar a DLC "Japanese-Voice Pack" (2,8 GB) se ele joga com vozes em inglês.
 
 ## Armadilhas já encontradas
 

@@ -35,6 +35,7 @@ struct Video {
     bool battle_60fps = true;   // FEW: the game's Performance display mode, 60 fps battles (game/few_display_mode.cpp)
     bool full_res_60 = false;   // FEW: with battle_60fps, render at the Quality mode's 1920x1080 instead of 1280x720
     bool low_res_30 = false;    // FEW: without battle_60fps, render at the Performance mode's 1280x720 (the Deck's screen)
+    bool res_630p = false;      // FEW: at 1280x720 (Performance group), take its lower dynamic resolution step, 1120x630
                                 // (off by default: dense battles at 1080p are GPU bound, 41-48 fps on an RTX 3050 Laptop)
 };
 

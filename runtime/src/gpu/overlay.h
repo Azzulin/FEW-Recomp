@@ -25,6 +25,9 @@ bool process_event(const SDL_Event& event);
 #endif
 void toggle();
 bool visible();
+// F2: 60 fps battles on/off (settings fps60), live: the game sets its display mode every frame
+// (game/few_display_mode.cpp). Saved, and shown for a moment on screen.
+void toggle_battle_60fps();
 void on_swapchain(const std::vector<VkImage>& images, VkFormat fmt);  // called with the device idle
 // Records the overlay into `image` (must be in COLOR_ATTACHMENT_OPTIMAL layout). Cheap when hidden.
 void render(VkCommandBuffer cb, VkImage image, VkExtent2D extent);

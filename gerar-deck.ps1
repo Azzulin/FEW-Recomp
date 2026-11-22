@@ -103,6 +103,7 @@ show_fps=1
 fps60=0
 fps60_1080p=0
 fps30_720p=1
+res_630p=1
 '@
 
 WriteLF "$out\few-steam.sh" @'
@@ -114,7 +115,7 @@ WriteLF "$out\few-steam.sh" @'
 # gravação vale o que estiver no menu.
 cd "$(dirname -- "$0")" || exit 1
 if [ -f hwder_settings.ini ]; then
-    for kv in fps60=0 fps60_1080p=0 fps30_720p=1; do
+    for kv in fps60=0 fps60_1080p=0 fps30_720p=1 res_630p=1; do
         grep -q "^${kv%%=*}=" hwder_settings.ini && continue
         [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # o .ini pode terminar sem quebra de linha
         echo "$kv" >> hwder_settings.ini
@@ -170,6 +171,8 @@ saves (pasta save) dentro da própria pasta. Nenhum caminho fixo; pode mover a p
 
 Primeira vez: Modo Desktop > Dolphin > esta pasta > F4 (terminal aqui) >  sh instalar-no-deck.sh
 O jogo aparece na biblioteca da Steam, aba Não Steam: "Fire Emblem Warriors".
+O "Adicionar jogo não Steam" do Modo Jogo não mostra o few-steam.sh (é um script): use o instalador acima, que
+também roda por SSH ou pelo Konsole com  sh instalar-no-deck.sh --yes  (a Steam fecha e reabre sozinha).
 
 - Compilado para o processador do Deck (Zen 2, -march=znver2): não roda em CPUs sem as mesmas instruções.
 - A batalha roda a 30 fps, o ritmo do próprio jogo no Switch (modo Qualidade), com o 3D a 1280x720 (a tela do
@@ -179,7 +182,8 @@ O jogo aparece na biblioteca da Steam, aba Não Steam: "Fire Emblem Warriors".
 - A primeira batalha de cada sessão pode parar ~2 s no começo compilando os shaders de cálculo.
 - Os primeiros minutos engasgam compilando shaders; os caches (pipeline_cache.bin, pipeline_warmup.bin) ficam
   aqui e o engasgo diminui com o uso.
-- F1 (ou segurar View) abre o menu do runtime. Log: hwder.log nesta pasta.
+- F1 (ou segurar View) abre o menu do runtime. F2 liga/desliga as batalhas a 60 fps na hora (no Deck: mapeie
+  um botão traseiro para F2 no layout do controle da Steam). Log: hwder.log nesta pasta.
 '@
 
 Write-Host "`nPasta pronta em $out" -ForegroundColor Green

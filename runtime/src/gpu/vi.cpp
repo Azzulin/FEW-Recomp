@@ -13,6 +13,8 @@
 #include "interp/interp.h"
 #include "debug_flags.h"
 #include "perf_stats.h"
+#include "stall_watch.h"
+#include "host/platform.h"
 
 
 namespace ipc {
@@ -226,6 +228,7 @@ public:
             s32 slot = in.read<s32>();
             QueueBufferInput qbi = in.read_flattened<QueueBufferInput>();
             perf::note_present();
+            stall::note_frame();
             // Sampler/idle-trace phases: split MainThread's present into before and after QueueBuffer.
             if (host::g_sample_phase == 3) host::set_sample_phase(5);
             else if (host::g_sample_phase == 4) host::set_sample_phase(6);
@@ -364,6 +367,7 @@ private:
 
     void compositor() {
         host::name_thread(L"HWDER compositor");
+        host::diag_thread_register("compositor");
         int presented = -1;
         u64 frame = 0;
         for (;;) {
@@ -371,6 +375,7 @@ private:
             NvGraphicBuffer gb;
             {
                 std::unique_lock<std::mutex> l(m_);
+                mark("waiting for a queued frame");
                 cv_.wait(l, [&] { return !queue_.empty(); });
                 q = queue_.front();
                 queue_.pop_front();
@@ -382,6 +387,7 @@ private:
             // bounded wait would show half-drawn frames (UI layers without their text, clear-colour flashes).
             for (u32 i = 0; i < std::min<u32>(q.in.fence.num_fences, 4); i++) {
                 int waited = 0;
+                mark("frame fence wait", ((u64)q.in.fence.fences[i].id << 32) | q.in.fence.fences[i].value);
                 host::timeline("comp fence wait", q.in.fence.fences[i].id, q.in.fence.fences[i].value);
                 while (!nv::syncpoint_wait(q.in.fence.fences[i].id, q.in.fence.fences[i].value, 1000000000ll)) {
                     if (++waited == 1 || waited % 10 == 0)
@@ -427,6 +433,7 @@ private:
             // The presenter copies a 120 fps frame and the guest buffer goes back before the 120 Hz release wait:
             // with only three buffers, holding them through that wait made the game wait for the grid each tick.
             if (fb.release_hz) fb.on_captured = [&] { release_now(0); };
+            mark("present", (u64)q.slot);
             if (fb.address) gpu::renderer()->present(fb);
             u64 ticket = fb.address ? display::last_present_ticket() : 0;
             host::timeline("comp presented", ticket);
@@ -458,6 +465,7 @@ private:
                     std::lock_guard<std::mutex> l(m_);
                     prev_ticket = slots_[presented].present_ticket;
                 }
+                mark("screen read wait", prev_ticket);
                 wait_screen_read(prev_ticket, presented);
                 host::timeline("comp screen read", prev_ticket);
             }
@@ -478,6 +486,37 @@ private:
         }
     }
 
+public:
+    // For stall reports: the queue, each slot in use and what the compositor is doing.
+    std::string state_text() {
+        std::string s;
+        char b[96];
+        {
+            std::unique_lock<std::mutex> l(m_, std::try_to_lock);
+            if (!l.owns_lock()) {
+                s = "queue locked";
+            } else {
+                std::snprintf(b, sizeof(b), "%zu queued;", queue_.size());
+                s = b;
+                static const char* const kNames[] = {"free", "dequeued", "queued", "acquired"};
+                for (int i = 0; i < kSlots; i++) {
+                    if (!slots_[i].has_buffer) continue;
+                    std::snprintf(b, sizeof(b), " slot %d %s (frame %llu)", i, kNames[(int)slots_[i].state],
+                                  (unsigned long long)slots_[i].frame);
+                    s += b;
+                }
+            }
+        }
+        std::snprintf(b, sizeof(b), "; compositor: %s (0x%llx)", where_.load(), (unsigned long long)where_arg_.load());
+        return s + b;
+    }
+
+private:
+    void mark(const char* where, u64 arg = 0) {
+        where_arg_.store(arg, std::memory_order_relaxed);
+        where_.store(where, std::memory_order_relaxed);
+    }
+
     std::mutex m_;
     std::condition_variable cv_;
     Slot slots_[kSlots];
@@ -485,12 +524,20 @@ private:
     std::thread thread_;
     u32 width_ = 1280, height_ = 720;
     host::Counter last_dequeue_{};  // HWDER_PACE_TRACE
+    std::atomic<const char*> where_{"starting"};
+    std::atomic<u64> where_arg_{0};
 };
 
 BufferQueue& layer_queue() {
     static BufferQueue* q = new BufferQueue;
     return *q;
 }
+}  // namespace
+
+// For stall reports (stall_watch.cpp).
+std::string vi_queue_state() { return layer_queue().state_text(); }
+
+namespace {
 
 // ------------------------------------------------------------------ vsync
 std::shared_ptr<ReadableEvent> vsync_event() {

@@ -39,6 +39,7 @@
 #include "fs/save_dir.h"
 #include "perf_stats.h"
 #include "debug_flags.h"
+#include "stall_watch.h"
 
 // ------------------------------------------------------------------ dispatch
 // One dense table per module text segment: (addr - text_lo) / 4 -> host function.
@@ -423,84 +424,12 @@ extern "C" void hw_log_backtrace(const char* tag) {
     hw_log("%s backtrace:%s", tag, line.c_str());
 }
 
-// ------------------------------------------------------------------ thread dump (HWDER_THREAD_DUMP=<seconds>)
-// Periodically logs every guest thread's host call stack (guest functions appear as f_<addr>).
-static void dump_threads() {
-    HANDLE proc = GetCurrentProcess();
-    for (auto& t : kern::all_threads()) {
-        if (!t->started || t->exited || !t->host_handle) continue;
-        u64 pcs[24];
-        int n = 0;
-        if (SuspendThread(t->host_handle) == (DWORD)-1) continue;
-        CONTEXT ctx = {};
-        ctx.ContextFlags = CONTEXT_FULL;
-        if (GetThreadContext(t->host_handle, &ctx)) {
-            // RtlVirtualUnwind does not allocate, so it is safe while the target is suspended.
-            for (; n < 24 && ctx.Rip; n++) {
-                pcs[n] = ctx.Rip;
-                DWORD64 base = 0;
-                PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
-                if (!rf) {
-                    ctx.Rip = *(DWORD64*)ctx.Rsp;
-                    ctx.Rsp += 8;
-                    continue;
-                }
-                void* hd = nullptr;
-                DWORD64 ef = 0;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, rf, &ctx, &hd, &ef, nullptr);
-            }
-        }
-        ResumeThread(t->host_handle);
-        std::string line;
-        char symbuf[sizeof(SYMBOL_INFO) + 256] = {};
-        auto* sym = (SYMBOL_INFO*)symbuf;
-        for (int i = 0; i < n; i++) {
-            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
-            sym->MaxNameLen = 255;
-            DWORD64 disp = 0;
-            char b[300];
-            snprintf(b, sizeof(b), " %s+0x%llx", SymFromAddr(proc, pcs[i], &disp, sym) ? pretty_symbol(sym->Name).c_str() : "?",
-                     (unsigned long long)disp);
-            line += b;
-            if (i < n - 1) line += " <";
-        }
-        hw_log("thread %llu '%s' prio %d%s:%s", (unsigned long long)t->id, t->name.c_str(), t->priority,
-               t->waiting ? " [waiting]" : "", line.c_str());
-    }
-}
-static void start_thread_dumper() {
-    const char* e = debug::str(debug::ThreadDump);
-    if (!e || !atoi(e)) return;
-    static int period = atoi(e);
-    CreateThread(nullptr, 0, [](void*) -> DWORD {
-        for (;;) {
-            host::sleep_ms(period * 1000);
-            hw_log("---- thread dump ----");
-            dump_threads();
-        }
-    }, nullptr, 0, nullptr);
-}
-
 #else
 extern "C" void hw_log_backtrace(const char* tag) {
     hw_log("backtrace: %s", tag);
     void* frames[48];
     const int count = backtrace(frames, 48);
     backtrace_symbols_fd(frames, count, STDERR_FILENO);
-}
-static void start_thread_dumper() {
-    const char* setting = std::getenv("HWDER_THREAD_DUMP");
-    const int seconds = setting ? std::atoi(setting) : 0;
-    if (seconds <= 0) return;
-    std::thread([seconds] {
-        for (;;) {
-            host::sleep_ms(static_cast<unsigned>(seconds) * 1000);
-            hw_log("---- thread state (Linux: running register capture unavailable) ----");
-            for (const auto& thread : kern::all_threads())
-                hw_log("thread %llu entry %llx started %d exited %d", (unsigned long long)thread->id,
-                       (unsigned long long)thread->entry, (int)thread->started.load(), (int)thread->exited.load());
-        }
-    }).detach();
 }
 static int g_crash_fd = -1;  // the log's descriptor, for the signal handler
 
@@ -561,6 +490,22 @@ static void install_linux_crash_handlers() {
     for (int signal : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) sigaction(signal, &action, nullptr);
 }
 #endif
+
+// ------------------------------------------------------------------ thread dump (HWDER_THREAD_DUMP=<seconds>)
+// Periodically logs every guest thread: what it waits on and its host call stack (guest functions appear as
+// f_<addr>). The same lines as a stall report (stall_watch.cpp), which also starts here.
+static void start_thread_dumper() {
+    stall::start();
+    const int period = debug::value(debug::ThreadDump, 0);
+    if (period <= 0) return;
+    std::thread([period] {
+        for (;;) {
+            host::sleep_ms(static_cast<unsigned>(period) * 1000);
+            hw_log("---- thread dump ----");
+            stall::dump_guest_threads();
+        }
+    }).detach();
+}
 
 // ------------------------------------------------------------------ NSO loading
 static bool lz4_decompress(const u8* src, size_t src_size, u8* dst, size_t dst_size) {

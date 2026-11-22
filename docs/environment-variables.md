@@ -97,9 +97,10 @@ current values. Kinds:
 | `HWDER_SHADER_FALLBACK` | string | unset | "all": replace every stage, "frag": only fragment shaders, with the solid-magenta fallback. |
 | `HWDER_SHADER_NO_KIL` | presence | off | Shader translation: turn every (conditional) KIL into a no-op (alpha-test diagnosis). |
 | `HWDER_SHOW` | presence | off | Show the window normally even in an automated (HWDER_LOG) run. |
+| `HWDER_STALL_DUMP` | number | unset | Stall report: when the game has queued no frame for that many seconds (default 5; 0 turns it off), log the GPU and vi state, what every guest thread waits on and every thread's host stack (stall: lines); again at 30 s. |
 | `HWDER_SYNC_PIPELINES` | presence | off | Compile every pipeline synchronously (the F1 async-shaders option off sets this too). |
 | `HWDER_SYNC_TRACE` | presence | off | nvdrv syncpoint wait / signal trace. |
-| `HWDER_THREAD_DUMP` | integer | unset | Dump all guest threads to the log every n seconds. |
+| `HWDER_THREAD_DUMP` | integer | unset | Every n seconds, log each guest thread: what it waits on and its host stack (Linux too; same lines as a stall report). |
 | `HWDER_THREAD_STATS` | integer | unset | Log per-thread CPU, waits and efficiency-core share every n ms, guest sleeps and the per-frame GPU thread profile (turns the draw profiler on). |
 | `HWDER_TIMELINE` | number | unset | Linux/Windows: from that many seconds after start, record 0.5 s of frame-loop events (MainThread phases, GPU thread busy/idle, GPFIFO submissions, syncpoints, vi queue/dequeue, compositor) to <log>.timeline.txt. |
 | `HWDER_TOTAL_MEM_MB` | integer | unset | The TotalMemorySize the game is told, in MiB (a Switch: 3285); overrides the Gameplay menu's Game memory option. Above 4096 the game takes its dev-kit memory layout; capped at the 6 GiB heap ceiling plus UsedMemorySize. |

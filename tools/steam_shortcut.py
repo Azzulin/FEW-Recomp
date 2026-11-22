@@ -27,9 +27,11 @@ import urllib.request
 
 try:
     import game_profile  # tools/game_profile.py: the game's identity in one place
-    STEAM_NAME = game_profile.NAME
+    STEAM_NAME, NINTENDO_ART = game_profile.NAME, game_profile.STORE_ART
 except ImportError:
     STEAM_NAME = "Fire Emblem Warriors"
+    NINTENDO_ART = ("/store/software/switch/70010000000600/"
+                    "579e11645c978f72253e4668b6ab2de2b618bc1bd8f19275ed4636312d07f069")
 LAUNCHER = "few-steam.sh"
 WINDOWS = os.name == "nt"  # Setup's Add to Steam button covers Windows
 HEAD = b"\x00shortcuts\x00"
@@ -372,8 +374,6 @@ def store_game_paths(cache, exe, nsp, keys):
 
 # ---- Artwork (as Setup's nintendoArtwork / steamGridArtwork) ----------------------------------------------------
 
-NINTENDO_ART = ("/store/software/switch/70010000006023/"
-                "4b035b357b10e59dce73609dd071e61d131d90b2e477c29088f26fbe50b44d1b")
 NINTENDO_CDN = "https://assets.nintendo.com/image/upload/"
 
 

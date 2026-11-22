@@ -3,6 +3,7 @@
 #include "kernel.h"
 
 #include "host/platform.h"
+#include "host/timing.h"
 
 #include <algorithm>
 #include <cstring>
@@ -126,9 +127,15 @@ void exit_current_thread() {
     host::thread_exit();
 }
 
-bool park_current_thread(s64 timeout_ns) {
+bool park_current_thread(s64 timeout_ns, const char* kind, u64 obj) {
     Thread* t = current_thread();
     t->waiting = true;
+    // Kept after waking (only the next park replaces it): a report then shows the last wait of a thread that runs.
+    if (t->wait_kind.load(std::memory_order_relaxed) != kind || t->wait_obj.load(std::memory_order_relaxed) != obj) {
+        t->wait_obj.store(obj, std::memory_order_relaxed);
+        t->wait_kind.store(kind, std::memory_order_relaxed);
+        t->wait_since_ms.store(host::ticks_ms(), std::memory_order_relaxed);
+    }
     int depth = g_kernel_lock.release_all();
     bool signaled;
     {
@@ -160,7 +167,7 @@ Result arbitrate_lock(Handle owner, u64 addr, Handle self) {
     if (v != (owner | kHasWaiters)) return ResultSuccess;  // state changed; userland retries
     MutexWaiter w{current_thread(), self};
     auto it = g_mutex_waiters.insert({addr, &w});
-    while (!w.acquired) park_current_thread(-1);
+    while (!w.acquired) park_current_thread(-1, "mutex", addr);
     (void)it;
     return ResultSuccess;
 }
@@ -230,7 +237,7 @@ Result wait_process_wide_key(u64 mutex_addr, u64 key, Handle self, s64 timeout_n
             if (left <= 0) break;
         }
         host::timeline("cv wait", key);
-        park_current_thread(left);
+        park_current_thread(left, "condvar", key);
     }
     // Timed out: if still waiting on the condvar, leave it; if already queued on the mutex, leave that.
     if (!w.signaled) {
@@ -301,7 +308,7 @@ Result wait_for_address(u64 addr, u32 type, s32 value, s64 timeout_ns) {
     auto it = g_addr_waiters.insert({addr, &w});
     while (!w.signaled) {
         host::timeline("addr wait", addr);
-        if (!park_current_thread(timeout_ns) && timeout_ns >= 0 && !w.signaled) {
+        if (!park_current_thread(timeout_ns, "address", addr) && timeout_ns >= 0 && !w.signaled) {
             g_addr_waiters.erase(it);
             return ResultTimedOut;
         }
@@ -401,7 +408,9 @@ static Result wait_synchronization_impl(const Handle* handles, s32 count, s64 ti
         }
         for (auto& o : objs) o->waiters.push_back(self);
         host::timeline("sync wait", (unsigned long long)count, handles[0]);
-        park_current_thread(left);
+        // The first object's type and handle; the count of handles in the upper half. No handle: a plain timed wait.
+        park_current_thread(left, count ? objs[0]->type_name() : "WaitSynchronization(no handles)",
+                            count ? ((u64)count << 32) | handles[0] : 0);
         for (auto& o : objs) {
             auto& w = o->waiters;
             w.erase(std::remove(w.begin(), w.end(), self), w.end());

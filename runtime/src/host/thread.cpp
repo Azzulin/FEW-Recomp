@@ -73,7 +73,21 @@ struct Thread {
     ThreadEntry entry;
     void* argument;
     std::atomic<std::uint32_t> tid{0};
+    std::atomic<std::uintptr_t> stack_top{0};  // for stack captures (host/stack.cpp)
 };
+}  // namespace
+std::uintptr_t current_stack_top() {
+    std::uintptr_t top = 0;
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+        void* addr = nullptr;
+        size_t size = 0;
+        if (pthread_attr_getstack(&attr, &addr, &size) == 0) top = reinterpret_cast<std::uintptr_t>(addr) + size;
+        pthread_attr_destroy(&attr);
+    }
+    return top;
+}
+namespace {
 void signal_complete(void* opaque) {
     event_signal(&static_cast<Thread*>(opaque)->complete);
 }
@@ -87,6 +101,7 @@ void* thread_entry(void* opaque) {
     // pthread_exit also executes this handler. Detached native stacks are reclaimed
     // at exit; the public handle remains waitable through its separate completion event.
     pthread_cleanup_push(signal_complete, thread.get());
+    thread->stack_top = current_stack_top();
     thread->tid = thread_id();
     event_wait(&thread->start);
     std::jmp_buf exit_jump;
@@ -131,6 +146,10 @@ void* thread_create(ThreadEntry entry, void* argument, std::size_t stack_size) {
     pthread_attr_destroy(&attr);
     if (error) { delete handle; delete worker; errno = error; return nullptr; }
     return handle;
+}
+// For host/stack.cpp: the top of a thread_create thread's stack (0 before it runs).
+std::uintptr_t thread_stack_top(void* opaque) {
+    return (*static_cast<std::shared_ptr<Thread>*>(opaque))->stack_top.load();
 }
 bool thread_start(void* opaque) {
     if (!opaque) return false;

@@ -175,7 +175,9 @@ set(RUNTIME_SOURCES
     runtime/src/host/timing.cpp
     runtime/src/host/file.cpp
     runtime/src/host/sampler.cpp
+    runtime/src/host/stack.cpp
     runtime/src/core.cpp
+    runtime/src/stall_watch.cpp
     runtime/src/debug_flags.cpp
     runtime/src/threads.cpp
     runtime/src/config.cpp

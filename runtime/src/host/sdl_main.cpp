@@ -52,6 +52,7 @@ int run_main(int argc, char** argv, int (*runtime)(int, char**)) {
         handle_window_event(event);
         if (!overlay::process_event(event) && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
             if (event.key.key == SDLK_F1 || event.key.key == SDLK_ESCAPE) overlay::toggle();
+            if (event.key.key == SDLK_F2) overlay::toggle_battle_60fps();
             if (event.key.key == SDLK_F11) toggle_borderless();
         }
     };

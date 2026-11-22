@@ -58,7 +58,7 @@ closes; Setup's Check and Prepare also refuse a CPU without AVX2.
 In game: **F1** opens the options overlay (internal resolution scale, unlocked resolution for
 ultrawide, vsync, borderless, anisotropic filtering, FPS counter, opt-in 60 Hz monitor switch, and
 a save-file cheats tab). Settings > Display > Frame rate > "120 fps (experimental)" draws an extra in-between frame per
-battle tick (off by default, switchable while playing; menus stay at 60; see [high-framerate.md](high-framerate.md)). **F11** toggles borderless fullscreen. SDL3 gamepads and XInput controllers work; two-player local co-op (the game's 2P mode): controllers take player slots in the order they connect, and the keyboard joins the first free slot by default (Settings > Input > Players chooses a fixed player or turns it off). Pressing the left stick on the warrior select answers the game's controller screen with the connected players;
+battle tick (off by default, switchable while playing; menus stay at 60; see [high-framerate.md](high-framerate.md)). **F2** switches 60 fps battles (the game's Performance mode) on and off at once. **F11** toggles borderless fullscreen. SDL3 gamepads and XInput controllers work; two-player local co-op (the game's 2P mode): controllers take player slots in the order they connect, and the keyboard joins the first free slot by default (Settings > Input > Players chooses a fixed player or turns it off). Pressing the left stick on the warrior select answers the game's controller screen with the connected players;
 keyboard: WASD move, arrows camera, K/Enter = A, J/Backspace = B, I = X, L = Y, Q/E = L/R,
 U/O = ZL/ZR, Space = +, Tab = -, 1-4 = D-pad, Z/C = stick clicks.
 

@@ -89,6 +89,7 @@ enum Id {
     ShaderFallback,  // HWDER_SHADER_FALLBACK
     ShaderNoKil,  // HWDER_SHADER_NO_KIL
     Show,  // HWDER_SHOW
+    StallDump,  // HWDER_STALL_DUMP
     SyncPipelines,  // HWDER_SYNC_PIPELINES
     SyncTrace,  // HWDER_SYNC_TRACE
     ThreadDump,  // HWDER_THREAD_DUMP

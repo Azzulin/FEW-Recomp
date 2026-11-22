@@ -7,3 +7,7 @@ UPDATE_ID = PROGRAM_ID | 0x800           # 0x0100F15003E64800
 AOC_BASE_ID = PROGRAM_ID + 0x1000        # add-on content is AOC_BASE_ID + index (1..5 for this game)
 UPDATE_VERSION = 327680                  # 1.5.0: the ExeFS the generated code is built from
 NAME = "Fire Emblem Warriors"
+# Key art on Nintendo's store image service (assets.nintendo.com/image/upload/<crop>/<this>): US store page
+# fire-emblem-warriors-switch, NSUID 70010000000600. Steam's box art for the shortcut is cropped from it.
+STORE_ART = ("/store/software/switch/70010000000600/"
+             "579e11645c978f72253e4668b6ab2de2b618bc1bd8f19275ed4636312d07f069")

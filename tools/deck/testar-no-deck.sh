@@ -47,7 +47,7 @@ fi
 [ -x few ] || chmod +x few
 # Como no few-steam.sh: as chaves que faltam num .ini de build antigo entram com o padrão do Deck (30 fps a 720p).
 if [ -f hwder_settings.ini ]; then
-    for kv in fps60=0 fps60_1080p=0 fps30_720p=1; do
+    for kv in fps60=0 fps60_1080p=0 fps30_720p=1 res_630p=1; do
         grep -q "^${kv%%=*}=" hwder_settings.ini && continue
         [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # o .ini pode terminar sem quebra de linha
         echo "$kv" >> hwder_settings.ini

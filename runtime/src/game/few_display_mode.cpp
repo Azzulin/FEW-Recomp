@@ -52,9 +52,17 @@ HW_HOOK(Display_SetMode) {
 // The dynamic resolution controller steps the configuration id within its mode's group (0-2, 3-4, 5-6; 7-9 fixed) from
 // the GPU time it reads in its timestamp reports. Here those report when the command thread reaches them, not when the
 // GPU did the work, so the "GPU time" includes command-thread latency and the picture drops to the lowest step while
-// the GPU idles. Keep each group's first (largest) configuration.
+// the GPU idles. Keep each group's first (largest) configuration, or with res_630p the Performance group's lower
+// step (id 4: 1120x630 instead of 1280x720; docs/few.md "Resolução dinâmica").
 HW_HOOK(DynRes_Update) {
     static const u32 kGroupTop[10] = {0, 0, 0, 3, 3, 5, 5, 7, 8, 9};
     const u32 id = (u32)c->x[0];
-    c->x[0] = id < 10 ? kGroupTop[id] : id;
+    u32 to = id < 10 ? kGroupTop[id] : id;
+    if (to == 3 && settings::video().res_630p) to = 4;
+    static u32 last = ~0u;
+    if (to != last && (to == 3 || to == 4)) {
+        last = to;
+        hw_log("few: 3D resolution configuration %u (%s)", to, to == 4 ? "1120x630" : "1280x720");
+    }
+    c->x[0] = to;
 }

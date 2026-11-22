@@ -301,6 +301,22 @@ void toggle() {
     if (g_inited && !g_screen) set_visible(!g_visible);
 }
 bool visible() { return g_visible; }
+
+// A one-line notice in the top-left corner for a moment (F2), drawn even with the menu closed.
+static std::string g_toast;
+static u64 g_toast_until_ms = 0;
+static bool toast_active() { return g_toast_until_ms && host::ticks_ms() < g_toast_until_ms; }
+
+void toggle_battle_60fps() {
+    std::lock_guard<std::recursive_mutex> l(g_m);
+    settings::Video& v = settings::video();
+    v.battle_60fps = !v.battle_60fps;
+    settings::save();
+    hw_log("few: 60 fps battles %s (F2)", v.battle_60fps ? "on" : "off");
+    g_toast = v.battle_60fps ? "60 fps battles: ON (Performance mode)" : "60 fps battles: OFF (30 fps, Quality mode)";
+    g_toast_until_ms = host::ticks_ms() + 2500;
+}
+
 void set_screen(ScreenFn fn) {
     std::lock_guard<std::recursive_mutex> l(g_m);
     if (!g_inited) return;
@@ -622,8 +638,8 @@ static void tab_graphics(bool& changed) {
     help("Recommended: on. Stops fences, rubble and other small scenery from vanishing during big fights.");
     if (ImGui::Checkbox("60 fps battles (the game's Performance mode)", &v.battle_60fps)) changed = true;
     help("On: the game runs in its own Performance display mode, 60 fps in battle (menus are 60 either way).\n"
-         "Off: Quality mode, 30 fps battles and slightly longer character draw distance. Takes effect the next\n"
-         "time the game sets its display mode (at launch).");
+         "Off: Quality mode, 30 fps battles and slightly longer character draw distance. Applies at once.\n"
+         "F2 switches it during play (on the Steam Deck: map a back button to F2 in the controller layout).");
     if (ImGui::Checkbox("1080p at 60 fps", &v.full_res_60)) changed = true;
     help("With 60 fps battles: render the 3D at the Quality mode's 1920x1080 instead of the Performance mode's\n"
          "1280x720. Needs a strong GPU to hold 60 fps in big fights. Takes effect at launch.");
@@ -631,6 +647,10 @@ static void tab_graphics(bool& changed) {
     help("Without 60 fps battles: render the 3D at the Performance mode's 1280x720 instead of 1920x1080. For\n"
          "small screens and weaker GPUs (on by default on the Steam Deck, whose screen is 1280x800).\n"
          "Takes effect at launch.");
+    if (ImGui::Checkbox("Lower 3D resolution (1120x630)", &v.res_630p)) changed = true;
+    help("When the 3D renders at 1280x720 (Performance mode, or \"720p at 30 fps\"): use the game's own lower\n"
+         "dynamic-resolution step, 1120x630, for about a quarter fewer pixels. The HUD stays sharp. For more\n"
+         "speed on weaker GPUs such as the Steam Deck's. Applies at once.");
 
     section("Shaders");
     settings::Debug& d = settings::debug();
@@ -1084,6 +1104,15 @@ static void build_ui(VkExtent2D extent) {
         ImGui::Text("%.0f fps  %.1f ms (worst %.0f)", avg > 0 ? 1000.0 / avg : 0.0, avg, worst);
         ImGui::End();
     }
+    if (toast_active() && !g_visible) {
+        ImGui::SetNextWindowPos(ImVec2(8, v.show_fps ? 8 + ImGui::GetFrameHeightWithSpacing() * 1.5f : 8));
+        ImGui::SetNextWindowBgAlpha(0.6f);
+        ImGui::Begin("##toast", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+        ImGui::TextColored(kGold, "%s", g_toast.c_str());
+        ImGui::End();
+    }
     if (!g_visible) return;
 
     const ImGuiStyle& st = ImGui::GetStyle();
@@ -1212,7 +1241,7 @@ void render(VkCommandBuffer cb, VkImage image, VkExtent2D extent) {
     g_frame_ms[g_frame_i++ % 120] = (t.QuadPart - g_last_t.QuadPart) * 1000.0 / f.QuadPart;
     g_last_t = t;
     settings::Video& v = settings::video();
-    if (!g_visible && !v.show_fps && !g_screen) return;
+    if (!g_visible && !v.show_fps && !g_screen && !toast_active()) return;
     auto vit = g_views.find(image);
     if (vit == g_views.end()) return;
     // The menu grows with the window: scale 1 at 900 pixels high, times the user's menu size.

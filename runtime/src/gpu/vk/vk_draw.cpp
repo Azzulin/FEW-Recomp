@@ -8,6 +8,7 @@
 
 #include "gpu/settings.h"
 #include "gpu/diag.h"
+#include "gpu/hang_state.h"
 #include "vk_renderer.h"
 #include "debug_flags.h"
 
@@ -1255,6 +1256,12 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
     if (it != compute_.end()) {
         cp = it->second;
     } else {
+        // Built here, on the GPU thread, before the launch is recorded: the game waits for this frame meanwhile. The
+        // battle effects' programs (~12 thousand instructions) took up to 7 s each in the Deck's compiler (ACO) the
+        // first time; marked for hang and stall reports, timed below.
+        hang::Where hw("building a compute program", key);
+        const u64 build_t0 = host::monotonic_ns();
+        double pipeline_ms = 0;
         cp = new ComputeProgram;
         compute_[key] = cp;
         shader::Options opt;
@@ -1290,11 +1297,18 @@ void VkRenderer::do_dispatch(const u32* cr, u64 qmd_va) {
             ci.stage.module = cp->sh->module;
             ci.stage.pName = "main";
             ci.layout = cp->pl;
+            const u64 pipe_t0 = host::monotonic_ns();
             if (vkCreateComputePipelines(dev(), pcache_, 1, &ci, nullptr, &cp->pipe) != VK_SUCCESS) {
                 hw_log("vk: compute pipeline creation failed");
                 cp->pipe = VK_NULL_HANDLE;
             }
+            pipeline_ms = (host::monotonic_ns() - pipe_t0) / 1e6;
         }
+        const double build_ms = (host::monotonic_ns() - build_t0) / 1e6;
+        if (build_ms > 50.0)
+            hw_log("vk: slow: compute program %016llx took %.0f ms (pipeline creation %.0f ms; local %ux%ux%u)",
+                   (unsigned long long)(cp->sh ? cp->sh->key : key), build_ms, pipeline_ms, env.lsize[0], env.lsize[1],
+                   env.lsize[2]);
     }
     if (!cp->pipe) {
         VK_LOG_ONCE("vk: dispatch skipped (no usable compute program)");

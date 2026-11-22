@@ -933,35 +933,52 @@ private:
     bool fb_cache_valid_ = false;
     static constexpr u32 kFbKeyWords = 8 * 16 + 5 + 3 + 2;  // RenderTarget, Zeta, ZetaSize, RtControl, ZetaEnable
     u32 fb_cache_regs_[kFbKeyWords] = {};  // the render-target registers fb_cache_ was resolved from
-    size_t pcache_saved_ = 0;  // pipelines_.size() at the last save
+    std::atomic<size_t> pcache_saved_{0};  // pipelines_.size() at the last save
+    std::atomic<bool> pcache_saving_{false};
+    // Every 600 presents. The retrieval (the whole driver cache, ~4.4 MB in battle) and the file write run on a worker:
+    // on the GPU thread they cost 120-170 ms on the Steam Deck every time a pipeline had been added (a hitch every
+    // 10-20 s in battle) and up to 1.6 s when the SD card stalled the write. flags=0 caches synchronize internally.
     void save_pipeline_cache() {
         save_warmup_records();
-        if (pipelines_.size() == pcache_saved_) return;
-        const auto begin = std::chrono::steady_clock::now();
-        size_t n = 0;
-        std::vector<u8> blob;
-        bool complete = false;
-        // flags=0 caches synchronize internally. A worker may grow the cache between
-        // queries; retry a bounded number of times, then leave saving to a later epoch.
-        for (int attempt = 0; attempt < 3; attempt++) {
-            if (vkGetPipelineCacheData(dev(), pcache_, &n, nullptr) != VK_SUCCESS || !n) return;
-            blob.resize(n);
-            const VkResult result = vkGetPipelineCacheData(dev(), pcache_, &n, blob.data());
-            if (result == VK_INCOMPLETE) continue;
-            if (result != VK_SUCCESS) return;
-            complete = true;
-            break;
-        }
-        if (!complete) return;
-        const auto retrieved = std::chrono::steady_clock::now();
-        if (FILE* f = fopen(kPipelineCacheFile, "wb")) {
-            fwrite(blob.data(), 1, n, f);
-            fclose(f);
-            pcache_saved_ = pipelines_.size();
-        }
-        if (debug::flag(debug::CacheProfile)) hw_log("cache-save: native retrieval %.3f ms, disk %.3f ms, %zu bytes",
-            std::chrono::duration<double, std::milli>(retrieved-begin).count(),
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-retrieved).count(), n);
+        const size_t count = pipelines_.size();
+        if (count == pcache_saved_.load() || pcache_saving_.exchange(true)) return;
+        std::thread([this, count] {
+            const auto begin = std::chrono::steady_clock::now();
+            size_t n = 0;
+            std::vector<u8> blob;
+            bool complete = false;
+            // A pipeline worker may grow the cache between the two queries: retry a bounded number of times, then
+            // leave saving to a later epoch.
+            for (int attempt = 0; attempt < 3 && !complete; attempt++) {
+                if (vkGetPipelineCacheData(dev(), pcache_, &n, nullptr) != VK_SUCCESS || !n) break;
+                blob.resize(n);
+                const VkResult result = vkGetPipelineCacheData(dev(), pcache_, &n, blob.data());
+                if (result == VK_INCOMPLETE) continue;
+                if (result != VK_SUCCESS) break;
+                complete = true;
+            }
+            const auto retrieved = std::chrono::steady_clock::now();
+            if (complete) {
+                // Written beside it and swapped in: closing the game mid-write never leaves a torn cache.
+                const std::string tmp = std::string(kPipelineCacheFile) + ".tmp";
+                bool ok = false;
+                if (FILE* f = fopen(tmp.c_str(), "wb")) {
+                    ok = fwrite(blob.data(), 1, n, f) == n;
+                    ok = fclose(f) == 0 && ok;
+                }
+#ifdef _WIN32
+                if (ok) ok = MoveFileExA(tmp.c_str(), kPipelineCacheFile, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+                if (ok) ok = rename(tmp.c_str(), kPipelineCacheFile) == 0;
+#endif
+                if (ok) pcache_saved_.store(count);
+                else remove(tmp.c_str());
+            }
+            if (debug::flag(debug::CacheProfile)) hw_log("cache-save: native retrieval %.3f ms, disk %.3f ms, %zu bytes",
+                std::chrono::duration<double, std::milli>(retrieved-begin).count(),
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-retrieved).count(), n);
+            pcache_saving_.store(false);
+        }).detach();
     }
     std::unordered_map<u64, ShaderEntry*> shaders_;
     std::unordered_map<u64, GfxProgram*> programs_;

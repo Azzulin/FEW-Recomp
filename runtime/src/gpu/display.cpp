@@ -55,6 +55,14 @@ static std::mutex g_status_lock;
 static std::string g_status = "booting";
 static std::atomic<u64> g_last_guest_frame{0};
 static double g_present_ms = 0, g_limiter_ms = 0;  // accumulated per 300 frames
+static u32 g_dropped = 0, g_acquire_waits = 0;      // per 300 frames: frames not shown / acquires over 20 ms
+static bool g_acquire_timed_out = false;            // the last present() gave up waiting for a swapchain image
+static bool g_acquire_gpu_idle = false;             // the last present() found the previous present finished on the GPU
+// Host frame limiter detection (gamescope's, in the Steam Deck's performance menu). Frames are dropped only
+// while it is detected: an image that is late because the GPU is behind (a heavy battle without a limiter)
+// is worth waiting a few ms for, and dropping it shows the previous frame twice.
+static int g_host_limit_score = 0;
+static bool g_host_limited = false;
 
 #define VKCHECK(x)                                                                   \
     do {                                                                             \
@@ -141,6 +149,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case overlay::kMsgDisplay60: set_display_60hz(h, lp != 0); return 0;
     case WM_KEYDOWN:
         if (wp == VK_F1 || wp == VK_ESCAPE) overlay::toggle();  // while open, the overlay handles Escape itself
+        if (wp == VK_F2 && !(lp & (1 << 30))) overlay::toggle_battle_60fps();  // not on key repeat
         if (wp == VK_F11) {
             set_borderless(h, !settings::video().borderless);
             settings::save();
@@ -664,6 +673,7 @@ static std::atomic<u64> g_last_image_ticket{0};     // last present_image's blit
 static std::mutex g_present_lock;
 static double g_trace_fence_ms, g_trace_acq_ms;  // HWDER_PACE_TRACE: last present's fence wait / acquire time
 static double g_trace_overshoot_ms;               // HWDER_PACE_TRACE: last limiter sleep's wake-up lateness
+static s64 g_present_deadline;                    // set by frame_limit: when the compositor must be free again (0: none)
 
 void client_size(unsigned* w, unsigned* h) {
     *w = g_extent.width;
@@ -701,6 +711,7 @@ static void frame_limit(u32 interval, u32 release_hz) {
     // Experiment: release every frame at the 60 Hz grid even when the game asks for interval 2.
     static const bool force1 = debug::flag(debug::ForceInterval1);
     if (force1 && !release_hz) slots = 1;
+    g_present_deadline = 0;
     if (fps <= 0) return;
     // The compositor's timer wake-ups must not be delayed by other busy threads (a late wake-up shows
     // up directly as a late frame followed by a short one).
@@ -714,22 +725,27 @@ static void frame_limit(u32 interval, u32 release_hz) {
     host::Counter now;
     host::counter(&now);
     s64 period = (s64)(freq.QuadPart / fps);
-    // `next` is the virtual vblank grid. In steady state we arrive here a little after the grid point
-    // (the game produced its frame right after we released the previous buffer). A frame up to one period
-    // late keeps the grid: it is shown at once and the next one at the following grid point, so the time
-    // is caught up. The game is frame-locked, and re-anchoring on every frame more than a quarter period
-    // late made a busy battle run at 17.0 ms instead of 16.7 (and the 120 fps mode at 8.57 instead of 8.33).
-    // Only a real stall (more than a period behind) re-anchors the grid to now instead of letting several
-    // presents burst through at zero wait.
+    s64 step = period * slots;
+    // `next` is the virtual vblank grid: the slot of the previous present. This frame is due `step` later.
+    // In steady state we arrive a little before that (the game produced its frame right after we released
+    // the previous buffer). A frame up to one period late keeps the grid: it is shown at once and the next
+    // one at the following grid point, so the time is caught up. The game is frame-locked, and re-anchoring
+    // on every frame more than a quarter period late made a busy battle run at 17.0 ms instead of 16.7 (and
+    // the 120 fps mode at 8.57 instead of 8.33). Only a real stall (more than a period behind its slot)
+    // re-anchors the grid to now instead of letting several presents burst through at zero wait.
+    // The old test (more than a period after the previous slot, re-anchoring one step ahead) took every
+    // late frame for a stall and then held the following frame a whole extra step: a game running at
+    // 17-20 ms per frame was shown at alternating 18/33 ms (~40 fps), and an interval-2 frame that took
+    // over 16.7 ms was shown early and the next one held for 66 ms.
     g_trace_overshoot_ms = 0;
-    if (!next.QuadPart || now.QuadPart - next.QuadPart > period) {
-        // Late frame: show it immediately (never add a full period of latency to a frame that is
-        // already late - when the game runs slower than the grid that would cost 16 ms on EVERY
-        // frame) but anchor the grid so the following frame still stays up for a whole period.
-        next.QuadPart = now.QuadPart + period * slots;
+    if (!next.QuadPart || now.QuadPart - (next.QuadPart + step) > period) {
+        // Show it now (never add latency to a frame that is already late) and make now the grid's slot.
+        next.QuadPart = now.QuadPart;
+        g_present_deadline = now.QuadPart + step;
         return;
     }
-    next.QuadPart += period * slots;
+    next.QuadPart += step;
+    g_present_deadline = next.QuadPart + step;
     s64 wait = next.QuadPart - now.QuadPart;
     if (wait <= 0) return;
     s64 sleep_100ns = wait * 10000000 / freq.QuadPart - 10000;
@@ -777,8 +793,12 @@ static void update_title(bool guest) {
 static std::mutex g_present_queue_lock;
 
 // Returns the g_present_timeline value that marks this blit's completion, 0 when nothing read `src`.
-static u64 present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSemaphore wait_sem, u64 wait_value) {
+// drop_deadline (counter ticks, 0: none) bounds the wait for a swapchain image: on timeout the frame is not
+// shown (g_acquire_timed_out) and 0 is returned, as when nothing was blitted. Without it the wait is 100 ms.
+static u64 present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSemaphore wait_sem, u64 wait_value,
+                   s64 drop_deadline = 0) {
     std::lock_guard<std::mutex> pl(g_present_lock);
+    g_acquire_timed_out = false;
     if (overlay::swapchain_dirty()) g_resize = true;
     if (g_resize.exchange(false)) {
         std::lock_guard<std::mutex> q(g_dev.queue_lock);
@@ -806,19 +826,35 @@ static u64 present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSem
     host::counter(&ta);
     vkWaitForFences(g_dev.dev, 1, &fs.fence, VK_TRUE, UINT64_MAX);
     host::counter(&tb);
+    // Whether the GPU has finished every earlier present: then a missing image is held by the host compositor.
+    u64 done = 0;
+    if (g_present_seq) vkGetSemaphoreCounterValue(g_dev.dev, g_present_timeline, &done);
+    g_acquire_gpu_idle = done >= g_present_seq;
+    u64 acquire_timeout_ns = 100000000ull;
+    if (drop_deadline) {
+        s64 left = drop_deadline - tb.QuadPart - tf.QuadPart / 500;  // 2 ms margin for the blit and present
+        acquire_timeout_ns = left > tf.QuadPart / 250 ? (u64)((double)left * 1e9 / tf.QuadPart) : 4000000ull;
+    }
     u32 idx;
-    // Bounded: a hidden/minimized window may never hand out an image; the game must not stall on it.
-    VkResult r = vkAcquireNextImageKHR(g_dev.dev, g_swapchain, 100000000ull, fs.acquired, VK_NULL_HANDLE, &idx);
+    // Bounded: a hidden/minimized window may never hand out an image, and a host compositor that shows
+    // frames slower than the game (the Steam Deck's frame limiter in gamescope) holds the images back. The
+    // game is frame-locked, so waiting here would slow the game itself down (30 shown = half speed at 60).
+    VkResult r = vkAcquireNextImageKHR(g_dev.dev, g_swapchain, acquire_timeout_ns, fs.acquired, VK_NULL_HANDLE, &idx);
     host::counter(&tc);
     g_trace_fence_ms = (tb.QuadPart - ta.QuadPart) * 1000.0 / tf.QuadPart;
     g_trace_acq_ms = (tc.QuadPart - tb.QuadPart) * 1000.0 / tf.QuadPart;
-    if (g_trace_fence_ms > 20 || g_trace_acq_ms > 20)
+    if (g_trace_acq_ms > 20) g_acquire_waits++;
+    // Acquire waits up to the slot bound are counted in the 300-frame report; one line each flooded the log.
+    if (g_trace_fence_ms > 20 || g_trace_acq_ms > 50)
         hw_log("display: slow: swapchain fence wait %.0f ms, acquire %.0f ms (result %d)", g_trace_fence_ms, g_trace_acq_ms, (int)r);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         g_resize = true;
         return 0;
     }
-    if (r == VK_TIMEOUT || r == VK_NOT_READY) return 0;
+    if (r == VK_TIMEOUT || r == VK_NOT_READY) {
+        g_acquire_timed_out = true;
+        return 0;
+    }
     vkResetFences(g_dev.dev, 1, &fs.fence);
     vkResetCommandBuffer(fs.cb, 0);
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -956,11 +992,14 @@ void present_image(VkImage image, u32 width, u32 height, u32 swap_interval, VkSe
             if (ms > 20.0) slow++;
             if (ms > 100.0) hw_log("display: slow frame (%.0f ms since the previous present)", ms);
             if (++n == 300) {
-                hw_log("display: 300 frames: avg %.2f ms, worst %.1f ms, %u frames over 20 ms | per frame: present %.1f ms, limiter %.1f ms",
-                       sum / n, worst, slow, g_present_ms / n, g_limiter_ms / n);
+                hw_log("display: 300 frames: avg %.2f ms, worst %.1f ms, %u frames over 20 ms | per frame: present %.1f ms, limiter %.1f ms"
+                       " | %u not shown, %u acquires over 20 ms%s",
+                       sum / n, worst, slow, g_present_ms / n, g_limiter_ms / n, g_dropped, g_acquire_waits,
+                       g_host_limited ? " (host frame limiter)" : "");
                 sum = worst = 0;
                 n = slow = 0;
                 g_present_ms = g_limiter_ms = 0;
+                g_dropped = g_acquire_waits = 0;
             }
         }
         last = now;
@@ -974,7 +1013,31 @@ void present_image(VkImage image, u32 width, u32 height, u32 swap_interval, VkSe
     // interpolation replays) overlaps the wait instead of delaying the present.
     frame_limit(swap_interval, release_hz);
     host::counter(&t1);
-    g_last_image_ticket = present(image, width, height, black, wait_sem, wait_value);
+    // While a host frame limiter holds the swapchain images, the wait lasts until the next release slot
+    // (less a margin for the blit and present). Past that the frame is dropped: the guest buffer goes back
+    // on time and the game, which is frame-locked, keeps its speed. Without a limiter the wait is at most a
+    // vblank (or the GPU's backlog), and the frame is always shown: dropping late frames from a busy battle
+    // (a deadline of 1-3 ms) skipped up to 20% of them on the Deck with no limiter on.
+    g_last_image_ticket = present(image, width, height, black, wait_sem, wait_value,
+                                  g_host_limited ? g_present_deadline : 0);
+    if (g_acquire_timed_out) g_dropped++;
+    {
+        // Detection: with the GPU done and a 60 Hz FIFO host, an image is free within a vblank. A wait over
+        // 20 ms (or a dropped frame) then means the host shows frames slower; quick acquires clear it.
+        bool was = g_host_limited;
+        if (g_acquire_gpu_idle && (g_acquire_timed_out || g_trace_acq_ms > 20.0)) g_host_limit_score += 3;
+        else if (g_trace_acq_ms < 2.0) g_host_limit_score--;
+        g_host_limit_score = std::max(0, std::min(g_host_limit_score, 60));
+        if (g_host_limit_score >= 15) g_host_limited = true;
+        else if (g_host_limit_score == 0) g_host_limited = false;
+        static u32 told = 0;
+        if (g_host_limited != was && told < 20) {
+            told++;
+            hw_log(g_host_limited ? "display: the host shows frames slower than the game (a frame limiter, e.g. the Steam "
+                                    "Deck's?): frames that find no free swapchain image are skipped so the game keeps its speed"
+                                  : "display: the host keeps up again: every frame is shown");
+        }
+    }
     update_title(true);
     host::counter(&t2);
     g_limiter_ms += (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;

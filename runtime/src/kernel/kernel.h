@@ -83,6 +83,11 @@ struct Thread : Object {
     Result wait_result = 0;
     s32 wait_index = -1;
     bool waiting = false;
+    // What the parked thread waits on, for stall reports (written by the thread itself, read racily by the
+    // stall watcher): the kind ("mutex", "condvar", "address", or the object type of WaitSynchronization),
+    // its address or handle, and when the wait began (host::ticks_ms).
+    std::atomic<const char*> wait_kind{nullptr};
+    std::atomic<u64> wait_obj{0}, wait_since_ms{0};
     bool cancel_requested = false;
     Handle handle = 0;  // the thread's own handle (value guest mutexes store as owner)
     std::string name;
@@ -145,8 +150,9 @@ Thread* current_thread();
 std::shared_ptr<Thread> create_thread(u64 entry, u64 arg, u64 stack_top, s32 priority, s32 core);
 void start_thread(Thread* t);
 [[noreturn]] void exit_current_thread();
-// Park the current thread (kernel lock held on entry and exit). Returns false on timeout.
-bool park_current_thread(s64 timeout_ns);
+// Park the current thread (kernel lock held on entry and exit). Returns false on timeout. `kind` and `obj` say what
+// it waits on (Thread::wait_kind, for stall reports).
+bool park_current_thread(s64 timeout_ns, const char* kind = "wait", u64 obj = 0);
 void wake_thread(Thread* t);
 // Every thread ever created (kept alive for diagnostics).
 std::vector<std::shared_ptr<Thread>> all_threads();

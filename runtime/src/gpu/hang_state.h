@@ -4,6 +4,8 @@
 #pragma once
 #include <atomic>
 
+#include "host/platform.h"
+
 namespace gpu::hang {
 
 enum Thread { kGpu, kRecord, kWaiter, kThreads };
@@ -12,9 +14,11 @@ inline std::atomic<const char*> g_where[kThreads];
 inline std::atomic<unsigned long long> g_arg[kThreads];
 inline thread_local int t_thread = -1;  // set once by each thread above; other threads leave no marks
 
+// Called once by each of these threads when it starts; also lists it in stall reports with its stack.
 inline void set_thread(Thread t, const char* where) {
     t_thread = t;
     g_where[t].store(where, std::memory_order_relaxed);
+    host::diag_thread_register(kThreadNames[t]);
 }
 
 struct Where {

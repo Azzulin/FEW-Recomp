@@ -3,6 +3,9 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace host {
 void* aligned_allocate(std::size_t size, std::size_t alignment);
@@ -42,4 +45,16 @@ std::uint32_t thread_id();
 std::uint32_t thread_os_id(void* thread);
 void thread_yield();
 std::uint64_t monotonic_ns();
+
+// ---- Stack capture of another thread (stall reports, HWDER_THREAD_DUMP; host/stack.cpp)
+// The thread's host call stack, innermost first, as text: "name+0xoff < name+0xoff < ...". Recompiled guest
+// functions appear as f_<address>; frames without an exported name as <module>+0x<offset in the file>, for
+// addr2line. Windows: SuspendThread + RtlVirtualUnwind. Linux: a signal stops the thread, which runs backtrace()
+// in the handler and waits there while its stack is also scanned for return addresses into the executable.
+// Empty when the thread could not be stopped. `thread` is a thread_create handle.
+std::string thread_stack_text(void* thread);
+// Lets the calling (runtime) thread be listed by diag_thread_stacks under `name`.
+void diag_thread_register(const char* name);
+// {name, stack} of every registered runtime thread.
+std::vector<std::pair<std::string, std::string>> diag_thread_stacks();
 }  // namespace host
