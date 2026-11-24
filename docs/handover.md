@@ -5,8 +5,15 @@ que mudou em "Release pública". Leia antes de qualquer tarefa; atualize ao term
 
 ## Release pública (2026-11-24)
 
-Sessão de 2026-11-24, só repositório e documentação (nenhuma mudança no runtime nem no gerador). Commits `a1a9db4`,
-`6447897` e `2e4dd7d`, enviados ao `origin/main`; a árvore ficou limpa.
+Sessão de 2026-11-24, só repositório e documentação (nenhuma mudança no runtime nem no gerador). Commits `fc40da5`,
+`e42aba8`, `70d7d38`, `44468e6` e `9ec199f`, enviados ao `origin/main`; a árvore ficou limpa.
+
+**Histórico reescrito em 2026-11-24** (`git filter-repo --replace-text`, push forçado da `main` e das tags) para
+tirar dados pessoais antes de o repositório poder ficar público: IP do Deck, nome da chave SSH, UUID do cartão SD,
+appid do atalho e nomes de pastas locais viraram marcadores (`<ip-do-deck>`, `<chave-do-deck>`, `<cartao>`,
+`<appid>`). Todos os hashes anteriores mudaram (os citados em seções antigas deste arquivo, como `8d32b02d…`, são
+SHA-256 de binários, não commits). Endereço e chave do Deck ficam agora em `tools/deck/deck.local`, ignorado pelo
+git e lido pelos scripts de `tools/deck/`. **Nunca versionar IP, chave, UUID do cartão ou caminhos locais.**
 
 Releases **v0.1.0** e **v0.2.0** no GitHub, as duas como *prerelease* (só código; cada um gera a partir do próprio
 dump; o repositório segue **privado**, por escolha do dono: não mudar a visibilidade). Para jogadores: `README.md`
