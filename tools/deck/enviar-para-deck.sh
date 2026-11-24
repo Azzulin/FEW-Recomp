@@ -4,7 +4,7 @@
 #
 # Uso:  bash tools/deck/enviar-para-deck.sh [/run/media/deck/<uuid-do-SD>/Games/FireEmblemWarriors]
 #       sem argumento: a pasta Games do primeiro cartão SD montado no Deck
-# Variáveis: DECK_HOST (padrão deck@<ip-do-deck>), DECK_KEY (padrão ~/.ssh/<chave-do-deck>)
+# Variáveis: DECK_HOST (ex.: deck@<ip>), DECK_KEY (chave SSH; opcional), também em tools/deck/deck.local
 #            ENVIAR_INI=1  sobrescreve também o hwder_settings.ini do Deck (por padrão o de lá é mantido, com os
 #                          ajustes feitos no F1)
 #            SO_DADOS=1    envia sem o few (pasta montada com gerar-deck.ps1 -SoDados)
@@ -12,13 +12,20 @@
 #                          que leva minutos (SHA-256 de ~19 GB dos dois lados)
 # O Deck precisa estar ACORDADO e com o sshd ativo (no Deck: sudo systemctl enable --now sshd).
 set -euo pipefail
-HOST=${DECK_HOST:-deck@<ip-do-deck>}
-KEY=${DECK_KEY:-$HOME/.ssh/<chave-do-deck>}
+# Endereço e chave do Deck: em tools/deck/deck.local (ignorado pelo git; nunca versionar), por exemplo
+#     DECK_HOST=deck@<ip do Deck>
+#     DECK_KEY=$HOME/.ssh/<chave>
+# ou pelas variáveis de ambiente de mesmo nome, que têm prioridade.
+_h=${DECK_HOST:-}; _k=${DECK_KEY:-}
+[ -f "$(dirname "$0")/deck.local" ] && . "$(dirname "$0")/deck.local"
+HOST=${_h:-${DECK_HOST:-}}; KEY=${_k:-${DECK_KEY:-}}
+[ -n "$HOST" ] || { echo "ERRO: defina DECK_HOST (ex.: deck@<ip do Deck>) em tools/deck/deck.local ou no ambiente"; exit 1; }
+SSH_KEY_ARGS=(); [ -n "$KEY" ] && SSH_KEY_ARGS=(-i "$KEY")
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SRC="$ROOT/Envio Deck/FireEmblemWarriors"
 [ -f "$SRC/few" ] || [ "${SO_DADOS:-}" = 1 ] || { echo "ERRO: monte a pasta antes (.\\gerar-deck.ps1)"; exit 1; }
 
-ssh_deck() { ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
+ssh_deck() { ssh "${SSH_KEY_ARGS[@]}" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }   # aspas para o shell remoto
 
 if [ $# -ge 1 ]; then

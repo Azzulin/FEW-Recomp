@@ -49,14 +49,14 @@ Build no Linux:
 - `gerar-deck.ps1` chama o WSL com `-u root` e acha o NSP base pelo título; o `build-deck-wsl.sh`, sem o toolchain
   em `/root/hwder`, chama `few_build.py --tools-only --tools-dir /root/few/tools`. Os textos da pasta do Deck
   (`LEIA-ME.txt`, `instalar-no-deck.sh`, `few-steam.sh`, `hwder_env.txt`) agora são em inglês.
-- Teste de 2026-11-24: build completo do zero com o `build-linux.sh` no WSL `Ubuntu-24.04` (Ubuntu 24.04, root, sem
+- Teste de 2026-11-24: build completo do zero com o `build-linux.sh` numa distro Ubuntu 24.04 do WSL (root, sem
   nada instalado antes): ferramentas (~5 min, o zig vem devagar do ziglang.org), update, C e 495 passos de
   compilação com 10 jobs, **106 min** no total; `few` de 678 MB, só `libc`/`libm`/`ld-linux`, glibc máxima 2.35.
   Rodado 45 s com `HWDER_OFFSCREEN=1`: leu base, update 1.5.0, chaves e as 5 DLCs pelo `.ini`, 5 módulos, Vulkan
   (llvmpipe no WSL), janela aberta. **Falta**: o build no próprio Deck (tempo e memória com o Steam aberto no Modo
   Desktop) e o atalho da Steam criado pelo script num Deck/Linux real. A pasta de teste foi apagada.
 - Também conferido: um clone limpo, sem `Game Files`, para no começo com mensagem clara.
-- **Espaço em disco**: a pasta de teste e as ferramentas baixadas foram apagadas dentro do `Ubuntu-24.04` e rodado o
+- **Espaço em disco**: a pasta de teste e as ferramentas baixadas foram apagadas dentro dessa distro e rodado o
   `/sbin/fstrim`, mas o `ext4.vhdx` dele continua com ~27 GB no C: (~17 GB usados dentro). O modo esparso do WSL
   (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
   administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
@@ -67,7 +67,7 @@ Build no Linux:
 descarte de quadros só com limitador detectado (ver "Jogatina de 19/11 à noite" em "Sessão de 2026-11-19"). **Falta
 a partida de teste do dono** (passos 4 e 5): na de 19/11 ele não alternou o F1, então não há comparação 720p × 630p.
 
-1. Conferir o SSH e que não há jogo aberto: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> 'pgrep -a few'`
+1. Conferir o SSH e que não há jogo aberto: `ssh deck@<ip do Deck> 'pgrep -a few'`
    (sem saída = livre). Se não responder, procurar o IP (DHCP) com `Get-NetNeighbor` no PowerShell.
 2. Gerar com `.\gerar-deck.ps1` antes de enviar: o `few` de `Envio Deck` foi apagado em 2026-11-20 para liberar
    espaço (o do Deck é o `8d32b02d…`). Enviar com
@@ -94,7 +94,7 @@ Estado: com a sobreposição de quadros, a luta densa do `battle_long.txt` mede 
 
 **A Steam do Deck abria o `few` direto, não o `few-steam.sh`** (visto em `/proc/<pid>/environ` e na linha do
 `reaper`): o dono jogava por uma entrada "few" que adicionou à mão no Modo Jogo, cujo seletor de arquivos não
-mostra `.sh`. Em 2026-11-17 essa entrada saiu da Steam; sobrou só "Fire Emblem Warriors" (appid <appid>, criada
+mostra `.sh`. Em 2026-11-17 essa entrada saiu da Steam; sobrou só "Fire Emblem Warriors" (criada
 pelo `instalar-no-deck.sh`, com arte), que abre o `few-steam.sh`. Para recriar: `sh instalar-no-deck.sh --yes` na
 pasta do jogo (por SSH também; fecha a Steam, que no Modo Jogo reabre sozinha). A capa vinha do Hyrule Warriors
 (endereço da loja da Nintendo herdado do HWDER); agora sai de `game_profile.STORE_ART`. Imagens já presentes em
@@ -113,7 +113,7 @@ programas que só aparecem neles. Antes de pedir ao dono, tente reproduzir no PC
 Passo a passo para medir de novo:
 
 1. **Deck livre**: ligado, no Modo Jogo, sem jogo aberto (o teste se recusa a rodar com um jogo aberto). Conferir
-   o SSH: `ssh -i ~/.ssh/<chave-do-deck> deck@<ip-do-deck> uptime`. O Deck suspende sozinho e some da rede.
+   o SSH: `ssh deck@<ip do Deck> uptime`. O Deck suspende sozinho e some da rede.
 2. **Build do Deck**: `.\gerar-deck.ps1` (incremental, ~3 min; não passe a saída por `Select-Object`: a tabela
    final quebra o pipeline e o script sai com erro depois de já ter gerado tudo) e
    `ARQUIVOS="few few-steam.sh" bash tools/deck/enviar-para-deck.sh` (o envio confere o SHA-256).
@@ -414,10 +414,10 @@ O binário Linux é compilado no PC (WSL2 `archlinux`) e vai pronto para o cart�
   `instalar-no-deck.sh` (atalho na Steam via `tools/steam_shortcut.py`), `LEIA-ME.txt`. ~19,8 GB.
   `-SoDados` monta sem o binário, para ir enviando enquanto o WSL compila.
 - **Envio** (Git Bash): `bash tools/deck/enviar-para-deck.sh` (sem argumento: `Games/FireEmblemWarriors` no primeiro
-  cartão com pasta `Games`). Por SSH com `~/.ssh/<chave-do-deck>`, usuário `deck`, IP `<ip-do-deck>` (DHCP;
-  `DECK_HOST=deck@<ip>`). Só o que mudou, retoma arquivo cortado, confere SHA-256 nos dois lados, mantém o `.ini`
+  cartão com pasta `Games`). Por SSH, usuário `deck`; endereço e chave em `tools/deck/deck.local` (ignorado pelo git:
+  `DECK_HOST=deck@<ip>`, `DECK_KEY=<chave>`; o IP vem por DHCP). Só o que mudou, retoma arquivo cortado, confere SHA-256 nos dois lados, mantém o `.ini`
   do Deck (`ENVIAR_INI=1` sobrescreve). O Deck precisa estar acordado; o SteamOS nega `systemd-inhibit` por SSH.
-- **No Deck**: `/run/media/deck/<cartao>/Games/FireEmblemWarriors` (SD ext4, SteamOS
+- **No Deck**: `/run/media/deck/<cartão>/Games/FireEmblemWarriors` (SD ext4, SteamOS
   3.9.5, kernel 7.2, APU AMD Custom 0405, RADV). Atalho na Steam: no Modo Desktop, na pasta,
   `sh instalar-no-deck.sh` (fecha e reabre a Steam). O write-watch no Linux usa `userfaultfd` + `PAGEMAP_SCAN`
   (kernel 6.7+).
@@ -817,7 +817,7 @@ Também nesta sessão:
    equivalentes do quadro do KTGL; os ganchos novos mostram o caminho com `gxref.py`).
 7. **Nomes do save**: o jogo grava `system` e `scenario0` em `save/0100F15003E64000/<usuário>/`. Ajustar
    `HW_GAME_SAVE_MAIN/SIDE` em `game_profile.h` (só afetam o seletor de save do menu F1).
-8. **Steam Deck: medição** como a do HWDER (fora deste repositório).
+8. **Steam Deck: medição** como a do HWDER (a medição dele fica fora deste repositório).
 9. **Compilar sem as NSPs no PC** (tarefa futura, pedida pelo dono para quando o jogo estiver estável e otimizado:
    ele quer arquivar as NSPs na nuvem e liberar ~20 GB do PC). Hoje o `gerar-few.ps1` exige a NSP da base e a do
    update em `Game Files` mesmo com `-SoBuild` (seção "entradas" e o `nsp_path` do `.ini`), e o `gerar-deck.ps1`

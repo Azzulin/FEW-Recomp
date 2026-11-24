@@ -62,3 +62,4 @@ __pycache__/
 !tools/tests/test_private_python.ps1
 !tools/screenshot.ps1
 !tools/run_test.ps1
+/tools/deck/deck.local

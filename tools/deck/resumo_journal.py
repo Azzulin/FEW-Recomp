@@ -5,7 +5,7 @@ com as estatísticas da thread da GPU do mesmo trecho (ocupação, envios, esper
 eventos que mudam o ritmo (F2, modo de exibição, intervalo de troca, resolução 3D, início/fim).
 
 Pegar o journal no Deck (a Steam joga a saída do jogo nele; o hwder.log é sobrescrito a cada execução):
-    ssh -i ~/.ssh/<chave-do-deck> deck@<ip> 'journalctl --user -S "AAAA-MM-DD HH:MM" -o short-iso | grep -F "[hwder]"' > journal.txt
+    ssh deck@<ip> 'journalctl --user -S "AAAA-MM-DD HH:MM" -o short-iso | grep -F "[hwder]"' > journal.txt
 Uso: python tools/deck/resumo_journal.py journal.txt
 """
 import re

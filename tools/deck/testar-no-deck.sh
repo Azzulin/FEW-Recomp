@@ -5,7 +5,7 @@
 # execução; jogar depois sobrescreve).
 #
 # Uso:  bash tools/deck/testar-no-deck.sh [segundos=90] [pasta no Deck]
-# Variáveis: DECK_HOST (padrão deck@<ip-do-deck>), DECK_KEY (padrão ~/.ssh/<chave-do-deck>),
+# Variáveis: DECK_HOST (ex.: deck@<ip>), DECK_KEY (chave SSH; opcional), também em tools/deck/deck.local,
 #            DECK_DISPLAY (padrão :1, o Xwayland dos jogos no Modo Jogo; no Modo Desktop use :0)
 #            DECK_INPUT=tools/input/battle_long.txt  roteiro de entrada (HWDER_INPUT_SCRIPT), copiado para o Deck
 #            DECK_FRESH=1  começa com save vazio: o save do Deck é guardado antes e volta no fim (o do teste some)
@@ -17,10 +17,17 @@
 # Batalha medida (save vazio até o prólogo e 5 min de luta, ~230 s):
 #   DECK_FRESH=1 DECK_PACE=1 DECK_INPUT=tools/input/battle_long.txt bash tools/deck/testar-no-deck.sh 230
 set -euo pipefail
-HOST=${DECK_HOST:-deck@<ip-do-deck>}
-KEY=${DECK_KEY:-$HOME/.ssh/<chave-do-deck>}
+# Endereço e chave do Deck: em tools/deck/deck.local (ignorado pelo git; nunca versionar), por exemplo
+#     DECK_HOST=deck@<ip do Deck>
+#     DECK_KEY=$HOME/.ssh/<chave>
+# ou pelas variáveis de ambiente de mesmo nome, que têm prioridade.
+_h=${DECK_HOST:-}; _k=${DECK_KEY:-}
+[ -f "$(dirname "$0")/deck.local" ] && . "$(dirname "$0")/deck.local"
+HOST=${_h:-${DECK_HOST:-}}; KEY=${_k:-${DECK_KEY:-}}
+[ -n "$HOST" ] || { echo "ERRO: defina DECK_HOST (ex.: deck@<ip do Deck>) em tools/deck/deck.local ou no ambiente"; exit 1; }
+SSH_KEY_ARGS=(); [ -n "$KEY" ] && SSH_KEY_ARGS=(-i "$KEY")
 SECS=${1:-90}
-ssh_deck() { ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
+ssh_deck() { ssh "${SSH_KEY_ARGS[@]}" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
 DEST=${2:-$(ssh_deck -n 'for d in /run/media/deck/*/; do [ -d "$d/Games/FireEmblemWarriors" ] && { echo "${d%/}/Games/FireEmblemWarriors"; break; }; done')}
 [ -n "$DEST" ] || { echo "ERRO: pasta FireEmblemWarriors não encontrada no Deck"; exit 1; }
 
