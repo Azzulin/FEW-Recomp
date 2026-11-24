@@ -1,13 +1,41 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-19. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
-atualize ao terminar uma sessão.
+Atualizado em 2026-11-24. **Próxima sessão: comece pela seção "Retomar aqui"** (o trabalho no jogo) e veja antes o
+que mudou em "Release pública". Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
 
 ## Release pública (2026-11-24)
 
-Releases **v0.1.0** e **v0.2.0** (só código; cada um gera a partir do próprio dump; o repositório segue privado).
-Para jogadores: `README.md` e `GUIDE.md`, em inglês. Nova release: atualizar o `CHANGELOG.md`, criar a tag `vX.Y.Z` e
-publicar com notas em inglês.
+Sessão de 2026-11-24, só repositório e documentação (nenhuma mudança no runtime nem no gerador). Commits `a1a9db4`,
+`6447897` e `2e4dd7d`, enviados ao `origin/main`; a árvore ficou limpa.
+
+Releases **v0.1.0** e **v0.2.0** no GitHub, as duas como *prerelease* (só código; cada um gera a partir do próprio
+dump; o repositório segue **privado**, por escolha do dono: não mudar a visibilidade). Para jogadores: `README.md`
+e `GUIDE.md`, em inglês. Nova release: atualizar o `CHANGELOG.md` (entradas "FEW Recomp vX.Y.Z"; o histórico do
+HWDER fica abaixo, em "HWDER history"), criar a tag `vX.Y.Z` e publicar com notas em inglês. Sem o `gh` instalado,
+a release sai pela API REST com o token de `git credential fill` (nunca imprimir o token).
+
+Documentação para quem baixa:
+
+- **`README.md`** (inglês, com resumo em português): aviso de que não há arquivo do jogo, tabela "How to play"
+  (um comando por sistema), estado por plataforma, limites conhecidos, como reportar e créditos. Seção **"Project
+  focus"** (e "Foco do projeto" no resumo): desempenho sem estressar o Deck e sem cortar efeitos (30 fps nativos a
+  720p com as partículas; sobreposição de quadros, envio só das páginas alteradas, build Zen 2, shaders em segundo
+  plano e em cache, degrau 1120×630; 60 fps opcional) e o **próximo interesse, dispositivos móveis**, dizendo que
+  **não existe versão Android** nem aparelho do dono para testá-la (pede ajuda por issue). As notas da v0.2.0 no
+  GitHub receberam o mesmo trecho.
+- **`GUIDE.md`** (novo, inglês): o que é preciso (IDs de título, só `.nsp`), estrutura de `Game Files`, Windows,
+  Steam Deck passo a passo para quem nunca usou o Modo Desktop, PC Linux (tabela de opções), Deck gerado no
+  Windows pelo WSL, configurações/saves/logs, atualização, solução de problemas e como reportar.
+- `AGENTS.md`: `GUIDE.md` em "Comece por aqui"; exceção de idioma (README, GUIDE e notas de release em inglês);
+  "mudou um passo do build? mude nos dois caminhos e no `GUIDE.md`"; o foco e o interesse em móveis (nunca afirmar
+  que há versão Android).
+- Os documentos herdados do HWDER em `docs/` (`playing`, `releasing`, `windows-setup*`, `linux-*`, `antivirus`,
+  `building`, `local-build`) ganharam um aviso de que são referência, não instrução para o FEW.
+- `recomplauncher.json` aponta para `Jogar no PC/few.exe` e `FireEmblemWarriors/few-steam.sh`; `play-local.sh`
+  virou atalho de `build-linux.sh --launch`; `.gitignore` ignora `FireEmblemWarriors/`; mensagens do
+  `steam_shortcut.py` sem "HWDER".
+
+Build no Linux:
 
 - **`build-linux.sh`** (raiz) → `tools/linux/few_build.py`: build nativo no Linux e no próprio Deck, sem root.
   Usa o Python do sistema (só biblioteca padrão) e o `linux_setup.install_toolchain` do HWDER para o toolchain fixado
@@ -27,6 +55,11 @@ publicar com notas em inglês.
   Rodado 45 s com `HWDER_OFFSCREEN=1`: leu base, update 1.5.0, chaves e as 5 DLCs pelo `.ini`, 5 módulos, Vulkan
   (llvmpipe no WSL), janela aberta. **Falta**: o build no próprio Deck (tempo e memória com o Steam aberto no Modo
   Desktop) e o atalho da Steam criado pelo script num Deck/Linux real. A pasta de teste foi apagada.
+- Também conferido: um clone limpo, sem `Game Files`, para no começo com mensagem clara.
+- **Espaço em disco**: a pasta de teste e as ferramentas baixadas foram apagadas dentro do `Ubuntu-24.04` e rodado o
+  `/sbin/fstrim`, mas o `ext4.vhdx` dele continua com ~27 GB no C: (~17 GB usados dentro). O modo esparso do WSL
+  (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
+  administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
 
 ## Retomar aqui (2026-11-16)
 
@@ -796,6 +829,10 @@ Também nesta sessão:
    Lembrar o dono: base e DLCs são hardlinks em `Game Files` e `Envio Deck`; o espaço só volta apagando as duas
    pastas. Extrair o RomFS para pasta não economiza (o conteúdo não é comprimido na NSP); a única economia de
    conteúdo é dispensar a DLC "Japanese-Voice Pack" (2,8 GB) se ele joga com vozes em inglês.
+10. **`build-linux.sh` num Deck/Linux real** (seção "Release pública"): medir tempo e memória do build no próprio
+    Deck e conferir o atalho da Steam criado pelo script. Precisa do dono.
+11. **Dispositivos móveis** (próximo interesse do dono, 2026-11-24): não há versão Android nem aparelho para testar.
+    Qualquer trabalho nessa frente depende de testadores; até lá, só documentar e não afirmar que existe.
 
 ## Armadilhas já encontradas
 
