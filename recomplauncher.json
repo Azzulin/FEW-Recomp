@@ -3,12 +3,12 @@
   "format": 1,
   "name": "Fire Emblem Warriors Recomp",
   "start": {
-    "program": ["Jogar no PC/few.exe"]
+    "program": ["Jogar no PC/few.exe", "FireEmblemWarriors/few-steam.sh"]
   },
-  "saves": ["{install}/Jogar no PC/save"],
+  "saves": ["{install}/Jogar no PC/save", "{install}/FireEmblemWarriors/save"],
   "folders": {
-    "saves": [{ "path": "{install}/Jogar no PC/save" }],
-    "logs": [{ "path": "{install}/Jogar no PC" }]
+    "saves": [{ "path": "{install}/Jogar no PC/save" }, { "path": "{install}/FireEmblemWarriors/save" }],
+    "logs": [{ "path": "{install}/Jogar no PC" }, { "path": "{install}/FireEmblemWarriors" }]
   },
   "exit_codes": { "0": "ok" }
 }

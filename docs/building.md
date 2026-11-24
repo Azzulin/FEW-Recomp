@@ -1,5 +1,9 @@
 # Building from source
 
+> [!NOTE]
+> Inherited from HWDER and kept as reference; it describes the original project's build flow, not this port's.
+> To build and play Fire Emblem Warriors (Windows, Linux, Steam Deck), see [GUIDE.md](../GUIDE.md).
+
 Most players should use Setup instead (see the [README](../README.md#quickstart)).
 
 The automated Setup workflow is also the recommended source build. To prepare without launching:

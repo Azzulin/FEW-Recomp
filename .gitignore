@@ -20,6 +20,7 @@ build/
 dist/
 /Jogar no PC/
 /Envio Deck/
+/FireEmblemWarriors/
 *.obj
 *.o
 *.pdb

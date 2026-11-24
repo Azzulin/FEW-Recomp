@@ -1,5 +1,9 @@
 # Experimental native Linux x86-64 source port
 
+> [!NOTE]
+> Inherited from HWDER and kept as reference; it describes the original project's build flow, not this port's.
+> To build and play Fire Emblem Warriors (Windows, Linux, Steam Deck), see [GUIDE.md](../GUIDE.md).
+
 Status (2026-10-24): the `linux-native` branch is main v0.2.2 (e7df07f) plus the 18 Linux port commits of 2026-10-19 and one follow-up that ports main's newer code (renderer split, debug-flag table, perf stats, multi-player input, save picker) to the host layer. On the Ally (Bazzite, Ubuntu 24.04 `hwder-dev` distrobox, Clang 18, RADV Phoenix / Mesa 25.2): host tests 7/7, synthetic tests 6/6, Python tests pass apart from the two public-runtime-fixture tests that also fail on main (its guest allowlist predates the game layer), and the complete runtime compiles and links against the link-check fixture below. The same branch still builds on Windows and its synthetic tests pass. A first-run build from the dump played through the 60 fps checks and 120 on the Ally (2026-10-24, Max). Target: Bazzite on a ROG Ally, AVX2 x86-64 CPU and Vulkan 1.3 graphics. Do not describe it as playable until the on-device tests below succeed.
 
 ### Link check without a game dump

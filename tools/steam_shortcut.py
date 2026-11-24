@@ -496,7 +496,7 @@ def add_to_root(root, target, artwork=True, steamgriddb_key="", account=""):
         if icon:
             result, content, appid = add(existing, STEAM_NAME, str(target), str(target.parent), str(icon))
     if result == ALREADY_THERE:
-        return True, "HWDER is already in your Steam library." + note
+        return True, STEAM_NAME + " is already in your Steam library." + note
     try:
         backup = write_shortcuts(file, existing, content)
     except OSError:
@@ -547,11 +547,11 @@ def add_to_steam(exe, steam_dir=None, account="", assume_yes=None, artwork=True,
     if running:
         if in_game_mode:
             say("Steam is running in Game Mode. It keeps its game list in memory and overwrites shortcuts.vdf when "
-                "it exits, so it has to close first. Steam will then restart on its own and HWDER appears in your "
-                "library after that.")
+                "it exits, so it has to close first. Steam will then restart on its own and " + STEAM_NAME + " appears "
+                "in your library after that.")
         else:
             say("Steam is running. It keeps its game list in memory and overwrites shortcuts.vdf when it exits, "
-                "so it has to close before HWDER can be added; it is started again afterwards.")
+                "so it has to close before " + STEAM_NAME + " can be added; it is started again afterwards.")
         if not ask("Close Steam now?", answer=assume_yes):
             say("left unchanged. Exit Steam, then run: python3 tools/steam_shortcut.py --add")
             return False
@@ -568,7 +568,7 @@ def add_to_steam(exe, steam_dir=None, account="", assume_yes=None, artwork=True,
         else:
             say("start Steam again yourself.")
     elif in_game_mode:
-        say("Steam restarts by itself in Game Mode; HWDER shows up in your library once it is back.")
+        say("Steam restarts by itself in Game Mode; " + STEAM_NAME + " shows up in your library once it is back.")
     return ok
 
 

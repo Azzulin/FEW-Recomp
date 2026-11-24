@@ -1,253 +1,290 @@
 # FEW Recomp — build and play guide
 
-Step-by-step instructions to build *Fire Emblem Warriors* from **your own copy** and play it on Windows or the
-Steam Deck. Nothing of the game is in this repository or in the releases: your PC builds the game from your dump.
+Step-by-step instructions to build *Fire Emblem Warriors* from **your own copy** and play it on Windows, Linux or
+the Steam Deck. Nothing of the game is in this repository or in the releases: your computer builds the game from
+your dump.
 
 > [!IMPORTANT]
 > You need your own legally obtained copy of the game, dumped from your own Nintendo Switch, and the `prod.keys`
 > from that same console. This project does not provide game files or keys and will not explain how to get them.
 > What you build contains the game and is for your own use only: do not share it.
 
-- [1. Requirements](#1-requirements)
-- [2. Get the source](#2-get-the-source)
-- [3. Put your game files in place](#3-put-your-game-files-in-place)
-- [4. Build and play on Windows](#4-build-and-play-on-windows)
-- [5. Settings, saves and logs](#5-settings-saves-and-logs)
-- [6. Steam Deck](#6-steam-deck)
-- [7. Updating to a newer version](#7-updating-to-a-newer-version)
-- [8. Troubleshooting](#8-troubleshooting)
-- [9. Reporting a problem](#9-reporting-a-problem)
+**Pick your path:**
 
-## 1. Requirements
+| I want to play on… | Do this |
+|---|---|
+| a Windows PC | [1](#1-what-you-need) → [2](#2-get-the-source) → [3](#3-put-your-game-files-in-place) → [4](#4-windows) |
+| a Steam Deck, building on the Deck itself (no other computer needed) | [1](#1-what-you-need) → [5A](#5a-steam-deck-step-by-step) |
+| a Linux PC (Bazzite, Arch, Fedora, Ubuntu, …) | [1](#1-what-you-need) → [2](#2-get-the-source) → [3](#3-put-your-game-files-in-place) → [5B](#5b-linux-pc) |
+| a Steam Deck, building on a Windows PC (faster) | [4](#4-windows) first, then [5C](#5c-steam-deck-built-on-a-windows-pc) |
 
-**To build (Windows PC):**
+Then: [6. Settings, saves and logs](#6-settings-saves-and-logs) · [7. Updating](#7-updating-to-a-newer-version) ·
+[8. Troubleshooting](#8-troubleshooting) · [9. Reporting a problem](#9-reporting-a-problem)
 
-- Windows 10 or 11, x64.
-- [Git for Windows](https://git-scm.com/download/win) (the build script fetches four pinned libraries with it).
-- [Python 3](https://www.python.org/downloads/windows/) on the `PATH`, only for the first run: it installs the
-  private build tools (Python 3.13, LLVM-MinGW, CMake, Ninja and five Python packages, each checked against a fixed
-  SHA-256) into `%LOCALAPPDATA%\HWDER`. No Visual Studio, no admin rights, no system changes. If you already use
-  [HWDER](https://github.com/blocker-3/HWDER), its tools are reused.
-- About **5 GB** free next to the repository (unpacked update, generated C, objects), plus your NSPs (~19 GB with
-  all DLCs). Internet access the first time (~400 MB of tools).
-- Time: the first build translates and compiles the whole game; expect roughly **45–90 minutes**, depending on the
-  CPU. Later builds only redo what changed.
+## 1. What you need
 
-**To play:**
+**Your game files (US release, from your own console):**
 
-- Windows PC: x86-64 CPU with AVX2 and a GPU with a Vulkan 1.2+ driver. Tested on an RTX 3050 laptop.
-- Steam Deck (SteamOS 3.x): built on the PC (see [section 6](#6-steam-deck)); the Deck itself compiles nothing.
-
-**Game files (all US, from your own console):**
-
-| File | Title ID | Version |
+| File | Title ID (in the file name) | Version |
 |---|---|---|
-| Base game | `0100F15003E64000` | v0 |
-| Update | `0100F15003E64800` | **1.5.0** (v327680) — required: the recompiled code is the update's |
-| DLCs (optional) | `0100F15003E65001` … `0100F15003E65005` | any |
+| Base game | `[0100F15003E64000]` | v0 |
+| Update | `[0100F15003E64800]` | **1.5.0** (v327680) — required |
+| DLCs (optional) | `[0100F15003E65001]` … `[0100F15003E65005]` | any |
 | `prod.keys` | — | from the same console |
 
-Other regions or update versions are not supported yet.
+The scripts recognise the base game and the update by the **title ID in square brackets** in the file name, so keep
+those tags (for example `Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp`). Other regions and other update
+versions are not supported yet. `.nsz`/`.xci` files are not accepted: use `.nsp`.
+
+**Windows PC:** Windows 10/11 x64, [Git](https://git-scm.com/download/win), [Python 3](https://www.python.org/downloads/windows/)
+(tick *Add python.exe to PATH* in the installer), about 5 GB free plus your NSPs (~19 GB with all DLCs), and a GPU
+with a Vulkan 1.2+ driver. First build: roughly 45–90 minutes.
+
+**Linux PC or Steam Deck:** an x86-64 CPU with AVX2, a Vulkan GPU driver (Mesa RADV, NVIDIA, Intel), `python3`
+(already on SteamOS, Bazzite, Fedora, Ubuntu and Arch), about **8 GB free on a Linux drive** (internal storage, or an
+ext4/btrfs SD card — not exFAT/FAT/NTFS), and internet the first time (~190 MB of build tools). **Nothing is installed
+on the system and no `sudo` is needed**: the build tools (Zig/Clang, CMake, Ninja, Python) are downloaded once into
+`~/.local/share/FEW-Recomp`, each file checked against a fixed SHA-256. The first build takes a few hours on a
+Steam Deck and less on a desktop PC; later updates only redo what changed.
 
 ## 2. Get the source
 
-Either clone it:
+Download **Source code (zip)** (or `.tar.gz`) from the [Releases](https://github.com/Azzulin/FEW-Recomp/releases)
+page and extract it, or clone it:
 
-```powershell
+```bash
 git clone https://github.com/Azzulin/FEW-Recomp.git
-cd FEW-Recomp
 ```
 
-or download `Source code (zip)` from the [Releases](https://github.com/Azzulin/FEW-Recomp/releases) page and
-extract it to a folder **with a short path and no special characters** (for example `C:\Games\FEW-Recomp`).
+Windows: extract to a short path such as `C:\Games\FEW-Recomp`. Linux: anywhere on a Linux drive, for example
+`~/Games/FEW-Recomp`.
 
 ## 3. Put your game files in place
 
-Create a folder named `Game Files` in the repository root and put your NSPs and keys there:
+Create a folder named **`Game Files`** inside the source folder and put your NSPs and keys there:
 
 ```
-FEW-Recomp\
-  Game Files\
+FEW-Recomp/
+  build-linux.sh            (Linux / Steam Deck)
+  gerar-few.ps1             (Windows)
+  Game Files/
     Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp
     Fire Emblem Warriors [0100F15003E64800][v327680][1.5.0][UPD][US].nsp
-    Fire Emblem Warriors [...][0100F15003E65001][US].nsp     <- DLCs, optional, any name
-    prod.keys                                                <- here or in the repository root
+    Fire Emblem Warriors [...][0100F15003E65001][US].nsp      <- DLCs, optional
+    prod.keys                                               <- here or next to the scripts
 ```
 
-The scripts find each file by the **title ID in square brackets** in its name, so keep the `[0100F15003E64000]`
-and `[0100F15003E64800]` tags. Everything in `Game Files` (and `prod.keys` anywhere) is ignored by git and is never
-uploaded. NSPs and keys are read where they are; they are not copied.
+Your NSPs and keys are read where they are, never copied or uploaded. On Linux they can also stay in another folder
+(even on an exFAT SD card): pass it with `--game-dir`.
 
-## 4. Build and play on Windows
+## 4. Windows
 
-Open **PowerShell** in the repository folder and run:
+Open **PowerShell** in the source folder (in Explorer: *File → Open Windows PowerShell*, or type `powershell` in the
+address bar) and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch
 ```
 
-(`-ExecutionPolicy Bypass` is only needed because the script is not signed. Leave out `-Launch` to build without
-starting the game.)
+(`-ExecutionPolicy Bypass` only because the script is not signed. Leave out `-Launch` to build without starting.)
 
-The script:
+The script checks your files, fetches four pinned libraries, installs its private build tools (Python 3.13,
+LLVM-MinGW, CMake, Ninja; no admin, no Visual Studio, into `%LOCALAPPDATA%\HWDER`), unpacks update 1.5.0, translates
+the game's ARM64 code to C, compiles it and publishes **`Jogar no PC\few.exe`** ("Play on PC"). If it stops halfway,
+run it again: it resumes. Play with `Jogar no PC\few.exe` — make a shortcut or add it to Steam as a non-Steam game.
 
-1. checks your files (it stops with a message if the base, the update or `prod.keys` is missing);
-2. fetches the pinned third-party sources into `third_party\` if they are missing;
-3. finds or installs the private build tools;
-4. unpacks update 1.5.0 into `data\update`;
-5. translates the game's ARM64 code to C in `generated\`;
-6. compiles in `build\pc` and publishes **`Jogar no PC\few.exe`** with a `hwder_settings.ini` pointing at your
-   files.
-
-If it stops halfway (closed window, sleep, error), run it again: it resumes. Afterwards, start the game with
-`Jogar no PC\few.exe` (you can make a shortcut or add it to Steam as a non-Steam game).
-
-Useful options:
-
-| Command | What it does |
+| Option | What it does |
 |---|---|
-| `.\gerar-few.ps1 -Jogo D:\Switch\FEW` | read the NSPs from another folder instead of `Game Files` |
-| `.\gerar-few.ps1 -Keys D:\keys\prod.keys` | use keys from another place |
-| `.\gerar-few.ps1 -Jobs 4` | fewer parallel compiles (less RAM; each one can take ~0.7 GB) |
-| `.\gerar-few.ps1 -SoBuild` | skip unpacking and translation; only recompile |
+| `-Jogo D:\Switch\FEW` | read the NSPs from another folder |
+| `-Keys D:\keys\prod.keys` | keys from another place |
+| `-Jobs 4` | fewer parallel compiles (less RAM) |
+| `-SoBuild` | only recompile (skip unpacking and translating) |
 
-## 5. Settings, saves and logs
+## 5A. Steam Deck, step by step
 
-Everything lives in `Jogar no PC\`:
+Everything happens on the Deck, in Desktop Mode. Keep it **plugged in**. You'll type a few commands: a USB or
+Bluetooth keyboard helps, or press **Steam + X** for the on-screen keyboard.
 
-| What | Where |
+1. **Desktop Mode:** press the Steam button → *Power* → *Switch to Desktop*.
+2. **Get the source:** open the release page in the browser, download **Source code (tar.gz)** and open
+   your *Downloads* folder in **Dolphin** (the file manager). Right-click the file → *Extract* → *Extract archive
+   here*. Move the extracted folder to your home folder (`/home/deck`) and rename it `FEW-Recomp` (optional, but the
+   commands below assume it).
+   > Use the internal storage, or an SD card formatted by SteamOS (ext4). A card formatted as exFAT on a PC cannot
+   > hold the game program; the script tells you if that is the case.
+3. **Your game files:** inside `FEW-Recomp`, create a folder `Game Files` (right-click → *Create New* → *Folder*)
+   and copy your NSPs and `prod.keys` into it (from a USB drive, an SD card or over the network). Or leave the NSPs
+   where they are and use `--game-dir` in step 5.
+4. **Open a terminal there:** open the `FEW-Recomp` folder in Dolphin and press **F4** (or right-click → *Open
+   Terminal Here*). A terminal panel opens in that folder.
+5. **Build:** type
+
+   ```bash
+   bash build-linux.sh
+   ```
+
+   and press Enter. If your NSPs are elsewhere (for example on the SD card), add the folder in quotes — you can drag
+   the folder from Dolphin into the terminal to paste its path:
+
+   ```bash
+   bash build-linux.sh --game-dir "/run/media/deck/<card>/Switch/Fire Emblem Warriors"
+   ```
+
+   The script downloads its tools, unpacks the update, translates and compiles the game. The first time this takes
+   **a few hours** on the Deck: leave it plugged in with the terminal open (the script keeps the Deck from sleeping).
+   If it gets interrupted, run the same command again: it continues where it stopped.
+6. **Add to Steam:** at the end it asks *Close Steam now?* — type `y` and Enter. Steam closes, the game is added
+   as **Fire Emblem Warriors** (with artwork), and Steam opens again.
+7. **Play:** double-click *Return to Gaming Mode* on the desktop. The game is in your library under **Non-Steam**.
+
+On the Deck the game uses its own Steam Deck settings: battles at 30 fps (the game's native pace) at 1280×720, with
+an option for 60 fps. See [section 6](#6-settings-saves-and-logs) for the menu and buttons. The game, its saves and
+its log are in `FEW-Recomp/FireEmblemWarriors/`.
+
+## 5B. Linux PC
+
+Requirements are in [section 1](#1-what-you-need); nothing needs `sudo`. In a terminal, in the source folder (after
+[step 3](#3-put-your-game-files-in-place)):
+
+```bash
+bash build-linux.sh            # build, then offer to add the game to Steam
+bash build-linux.sh --launch   # same, then start the game
+```
+
+The game ends up in **`FireEmblemWarriors/`** in the source folder: start it with `./FireEmblemWarriors/few-steam.sh`
+or from Steam (*Non-Steam* games). It runs on any distribution with glibc 2.35 or newer; native Steam and Flatpak
+Steam are both supported. Immutable systems (Bazzite, SteamOS) need nothing extra.
+
+| Option | What it does |
 |---|---|
-| Saves | `Jogar no PC\save\` — back this folder up |
-| Settings | `Jogar no PC\hwder_settings.ini` (also editable from the in-game **F1** menu) |
-| Log | `Jogar no PC\hwder.log` |
-| Shader caches | `pipeline_cache.bin`, `pipeline_warmup.bin` (stutter goes down as they fill up) |
+| `--game-dir DIR` | folder with your NSPs (default: `Game Files`) |
+| `--keys FILE` | your `prod.keys` (default: in the game folder or next to the script) |
+| `--out DIR` | where the game folder goes (default: `FireEmblemWarriors` in the source folder) |
+| `--jobs N` | parallel compiles (default: from free RAM; each can take up to ~0.9 GB) |
+| `--steam` / `--no-steam` | add to Steam without asking (closes and reopens it) / don't touch Steam |
+| `--deck` / `--no-deck` | force the Steam Deck build and settings on or off (detected automatically) |
+| `--march CPU` | compile for one CPU family, e.g. `znver3` (default: generic AVX2; `znver2` on a Deck) |
+| `--launch` | start the game when the build is done |
 
-In game:
+Files it creates (all ignored by git): `data/update` (the unpacked update), `generated/` (C code), `build/linux/`
+(compiler output and `build.log`), `FireEmblemWarriors/` (the game) and `~/.local/share/FEW-Recomp` (build tools,
+shared by every copy of the source). To remove everything, delete those.
 
-- **F1** (or holding View/Select on a controller) opens the runtime menu.
-- **F2** toggles 60 fps battles on and off.
+## 5C. Steam Deck, built on a Windows PC
 
-Main `hwder_settings.ini` keys (they take effect on the next start):
+Faster than building on the Deck, but the ~20 GB folder has to be copied to the Deck afterwards.
 
-| Key | Default (PC) | Meaning |
-|---|---|---|
-| `fps60` | `1` | battles at 60 fps (the game's Performance mode). `0` = Quality mode, 30 fps, the game's native pace |
-| `fps60_1080p` | `0` | render 60 fps battles at 1920×1080 instead of 1280×720 |
-| `fps30_720p` | `0` | render 30 fps battles at 1280×720 |
-| `show_fps` | `0` | fps counter |
-
-Extra debug switches for advanced users: [docs/environment-variables.md](docs/environment-variables.md). They can
-also go in a `hwder_env.txt` file next to the game (`NAME=VALUE`, one per line).
-
-## 6. Steam Deck
-
-The Linux binary is compiled on your Windows PC inside WSL, then copied to the Deck together with your game files.
-This takes the Windows build (section 4) plus about **1.5–2 hours** of compiling the first time.
-
-### 6.1 One-time WSL setup
-
-1. Install WSL with a Linux distro. Arch Linux is what the project uses; Ubuntu 22.04/24.04 also works:
+1. Build for Windows first ([section 4](#4-windows)).
+2. Install WSL with Ubuntu (once; it asks you to create a Linux user):
    ```powershell
    wsl --install -d Ubuntu-24.04
    ```
-   Give WSL enough memory for the parallel compiles (10 GB is what was tested): in `%USERPROFILE%\.wslconfig`,
+   The compile needs memory: if your PC has 16 GB, put this in `%USERPROFILE%\.wslconfig` and run `wsl --shutdown`:
    ```ini
    [wsl2]
    memory=10GB
    ```
-2. Install the HWDER v0.3.5 Linux build tools and libraries inside WSL (as root, in `/root/hwder`):
+3. Build the Deck folder:
    ```powershell
-   wsl -d Ubuntu-24.04 -u root
+   powershell -ExecutionPolicy Bypass -File .\gerar-deck.ps1 -Distro Ubuntu-24.04
    ```
+   The first run downloads the Linux build tools inside WSL by itself and compiles for the Deck's CPU (Zen 2): about
+   1.5–2 hours. The result is **`Envio Deck\FireEmblemWarriors\`** ("Deck package"): the game, your NSPs and keys
+   (hardlinks: no extra space on the PC), the unpacked update, Deck settings and an installer. It has no fixed paths.
+4. Copy the whole `FireEmblemWarriors` folder to the Deck (internal storage or an ext4 SD card), for example to
+   `Games/` on the SD card, with a USB drive, a network share, `scp` or KDE Connect. Optional, over SSH from Git Bash
+   (resumes interrupted copies and checks SHA-256):
+   `DECK_HOST=deck@<deck-ip> DECK_KEY=~/.ssh/<your-key> bash tools/deck/enviar-para-deck.sh`.
+5. On the Deck, in Desktop Mode, open the folder in Dolphin, press **F4** and run once:
    ```bash
-   mkdir -p /root/hwder/release && cd /root/hwder/release
-   curl -LO https://github.com/blocker-3/HWDER/releases/download/v0.3.5/HWDER-linux-x86_64-v0.3.5.tar.gz
-   tar xzf HWDER-linux-x86_64-v0.3.5.tar.gz
-   XDG_DATA_HOME=/root/hwder/data python3 HWDER-linux-x86_64-v0.3.5/tools/linux_setup.py toolchain
-   exit
+   sh instalar-no-deck.sh
    ```
-   This gives `/root/hwder/release/HWDER-linux-x86_64-v0.3.5/linux-deps` (static SDL3, FFmpeg, libcrypto) and the
-   Zig/Clang toolchain in `/root/hwder/data/HWDER/toolchain/`. The result runs on any SteamOS 3 (glibc 2.35).
+   It adds **Fire Emblem Warriors** to Steam (Steam closes and reopens). Back in Gaming Mode it's under *Non-Steam*.
 
-### 6.2 Build the Deck folder
+## 6. Settings, saves and logs
 
-After `gerar-few.ps1` has finished at least once:
+The game keeps everything in its own folder — `Jogar no PC\` on Windows, `FireEmblemWarriors/` on Linux and the Deck:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\gerar-deck.ps1 -Distro Ubuntu-24.04
-```
+| What | File |
+|---|---|
+| Saves | `save/` — back this folder up |
+| Settings | `hwder_settings.ini` (also changed from the **F1** menu) |
+| Log | `hwder.log` |
+| Shader caches | `pipeline_cache.bin`, `pipeline_warmup.bin` (stutter goes down as they fill up) |
 
-(`-Distro` defaults to `archlinux`. `-March ""` builds for any AVX2 Linux PC instead of the Deck's Zen 2 CPU.)
+In game:
 
-It produces **`Envio Deck\FireEmblemWarriors\`** (~20 GB): the `few` binary, your NSPs and keys (as hardlinks, so
-they take no extra space on the PC), the unpacked update, Deck settings, a Steam launcher and an installer. The
-folder has no fixed paths; you can put it anywhere on the Deck.
+- **F1** — or holding **View** (Select) on a controller — opens the runtime menu (graphics options, fps counter).
+- **F2** turns 60 fps battles on and off. On the Deck, map a back button to F2 in Steam's controller settings if you
+  want it.
 
-### 6.3 Copy it to the Deck
+Main `hwder_settings.ini` keys (they apply on the next start):
 
-Copy the whole `FireEmblemWarriors` folder to the Deck — for example to `Games/` on the SD card — with any method
-you like (USB drive, network share, `scp`, KDE Connect). The SD card or drive must be **ext4** (SteamOS's default
-format): exFAT/FAT cannot hold executable files.
+| Key | PC default | Deck default | Meaning |
+|---|---|---|---|
+| `fps60` | `1` | `0` | battles at 60 fps (the game's Performance mode); `0` = 30 fps Quality mode, the native pace |
+| `fps60_1080p` | `0` | `0` | 60 fps battles at 1920×1080 instead of 1280×720 |
+| `fps30_720p` | `0` | `1` | 30 fps battles at 1280×720 instead of 1920×1080 |
+| `res_630p` | `0` | `1` | at 1280×720, use the game's lower 1120×630 step in heavy scenes |
+| `show_fps` | `0` | `1` | fps counter |
 
-Optional, over SSH from Git Bash (resumes interrupted copies and checks SHA-256 on both sides): enable SSH on the
-Deck, then
-
-```bash
-DECK_HOST=deck@<deck-ip> DECK_KEY=~/.ssh/<your-key> bash tools/deck/enviar-para-deck.sh
-```
-
-It copies to `Games/FireEmblemWarriors` on the first SD card that has a `Games` folder.
-
-### 6.4 First start on the Deck
-
-In **Desktop Mode**, open the `FireEmblemWarriors` folder in Dolphin, press **F4** (terminal) and run once:
-
-```bash
-sh instalar-no-deck.sh
-```
-
-It marks the game as executable and adds **Fire Emblem Warriors** to Steam (Steam closes and reopens). Back in
-Game Mode, the game is in the library under *Non-Steam*. Run the script again if you move the folder.
-
-On the Deck, battles run at 30 fps (the game's native pace) with the 3D at 1280×720; the F1 menu has the 60 fps
-option. Saves, settings and `hwder.log` are inside the game folder.
+Debug switches for advanced users: [docs/environment-variables.md](docs/environment-variables.md). They can go in a
+`hwder_env.txt` file in the game folder (`NAME=VALUE`, one per line); the Deck build has one with
+`HWDER_FRAME_OVERLAP=1`.
 
 ## 7. Updating to a newer version
 
-```powershell
-git pull
-powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1
-```
+Get the new source over the old one (`git pull`, or extract the new archive into the same folder, replacing files)
+and build again — `gerar-few.ps1` on Windows, `bash build-linux.sh` on Linux and the Deck. Only what changed is
+rebuilt, and your saves and settings are kept. `Game Files`, `data`, `generated`, `build` and the game folder must
+stay where they are.
 
-(or extract the new source zip over the old folder, keeping `Game Files`, `data`, `generated`, `build` and
-`Jogar no PC`). Only what changed is rebuilt. Your saves in `Jogar no PC\save` are kept. For the Deck, run
-`gerar-deck.ps1` again and copy only the new `few` and `few-steam.sh` (the Deck keeps its own `hwder_settings.ini`
-and `save\`).
+For a Deck folder built on Windows (5C): run `gerar-deck.ps1` again and copy only `few` and `few-steam.sh` to the
+Deck; it keeps its own settings and saves.
 
 ## 8. Troubleshooting
 
+**Windows** (the script's messages are in Portuguese; the left column shows how each one starts):
+
 | Message / symptom | What to do |
 |---|---|
-| `running scripts is disabled on this system` | Run the script with `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1` |
-| `Esperava 1 NSP da base [0100F15003E64000]` / `do update [0100F15003E64800]` | The base or update NSP is missing from `Game Files`, there are two of them, or the name lacks the title ID in brackets |
-| `prod.keys nao encontrado` | Put `prod.keys` in `Game Files` or the repository root, or pass `-Keys <path>` |
-| `Sem toolchain privado e sem Python no sistema` | Install Python 3 from python.org (tick *Add to PATH*) and run again |
-| `Falha ao desempacotar o update` | Your keys don't match the dump, or the update is not 1.5.0 |
-| `Compilacao falhou` | Run again (it resumes). If it keeps failing at the same file, try `-Jobs 4` (low RAM) and report it |
+| `running scripts is disabled on this system` | Use `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1` |
+| `Esperava 1 NSP da base …` / `… do update …` | Base or update NSP missing, duplicated, or its name lacks the title ID in brackets |
+| `prod.keys nao encontrado` | Put `prod.keys` in `Game Files` or next to the script, or pass `-Keys` |
+| `Sem toolchain privado e sem Python no sistema` | Install Python 3 (with *Add to PATH*) and run again |
+| `Falha ao desempacotar o update` | Keys don't match the dump, or the update is not 1.5.0 |
+| `Compilacao falhou` | Run again (it resumes); if it keeps failing, try `-Jobs 4` and report it |
 | `O jogo esta aberto` | Close `few.exe` before rebuilding |
-| Game window closes at start | Read `Jogar no PC\hwder.log`; update your GPU driver; check Vulkan support |
-| Stutter the first minutes | Shaders compiling; it improves as the caches fill up |
-| Deck: `falta linux-deps` / `falta o toolchain do HWDER` | Redo [6.1](#61-one-time-wsl-setup) in the same distro you pass to `-Distro` |
-| Deck: `o cartão não aceita arquivos executáveis` | The card is exFAT/FAT; use an ext4 card or the internal storage |
 
-The script messages are in Portuguese; the left column above shows the start of each one.
+**Linux and Steam Deck:**
+
+| Message / symptom | What to do |
+|---|---|
+| `python3 was not found` | Install Python 3 with your package manager (SteamOS and Bazzite already have it) |
+| `... is on a exfat drive` / `does not allow running programs` | Move the source folder to the internal storage (`/home/deck`) or an ext4/btrfs drive; NSPs can stay where they are with `--game-dir` |
+| `Not enough free space` | Free about 8 GB on that drive |
+| `Expected 1 base game NSP …` / `… update 1.5.0 NSP …` | Check the file names have the title IDs in brackets and the files are in `Game Files` (or `--game-dir`) |
+| `Could not download …` | Check the internet connection and run again |
+| `Could not unpack the update` | Keys don't match the dump, or the update is not 1.5.0 |
+| `Compiling failed` / `Killed` / `signal 9` during the compile | Out of memory: close other programs and run `bash build-linux.sh --jobs 2` (it resumes). Log: `build/linux/build.log` |
+| The build stopped when the screen turned off | Run the command again; it continues. Keep the Deck plugged in |
+| Not in Steam | Sign in to Steam once, then `bash build-linux.sh --steam` |
+| The game closes right away | Run `./FireEmblemWarriors/few-steam.sh` in a terminal to see the error, and read `FireEmblemWarriors/hwder.log` |
+
+**Both:**
+
+| Symptom | What to do |
+|---|---|
+| Stutter in the first minutes or in new scenes | Shaders compiling; it improves as the caches fill up |
+| Black screen or crash at start | Update the GPU driver; read `hwder.log` |
 
 ## 9. Reporting a problem
 
 Open an issue at <https://github.com/Azzulin/FEW-Recomp/issues> with:
 
-- where you play (Windows PC with CPU/GPU/driver, or Steam Deck), and the commit or release you built;
-- what you did and what happened (a screenshot or a short clip helps);
-- `hwder.log` from the game folder.
+- where you play (Windows with CPU/GPU/driver, Linux distribution and GPU, or Steam Deck) and the release or commit;
+- what you did and what happened (a screenshot or short clip helps);
+- `hwder.log` from the game folder, and for build problems the end of the script's output (on Linux,
+  `build/linux/build.log`).
 
-**Never attach game files, keys, `few.exe`/`few` or saves.** The log contains none of them.
+**Never attach game files, keys, the built `few`/`few.exe` or saves.** The logs contain none of them.

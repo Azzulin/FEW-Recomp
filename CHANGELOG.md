@@ -1,5 +1,17 @@
 # Changelog
 
+## FEW Recomp v0.2.0 (2026-11-24)
+
+- **Build natively on Linux and on the Steam Deck itself** with one command, `bash build-linux.sh`: no Windows PC,
+  no `sudo`, nothing installed on the system. It checks the machine and your files, downloads pinned build tools
+  once (SHA-256 checked) into `~/.local/share/FEW-Recomp`, unpacks the update, translates and compiles the game,
+  builds `FireEmblemWarriors/` with the Deck's settings when it runs on a Deck, and adds the game to Steam (native or
+  Flatpak). It keeps the machine awake while compiling and resumes after an interruption.
+- [GUIDE.md](GUIDE.md) rewritten around four paths (Windows, Steam Deck on the Deck, Linux PC, Steam Deck built on
+  Windows), with a Desktop Mode walkthrough for the Deck and a Linux troubleshooting table.
+- Building the Deck version on Windows (`gerar-deck.ps1`) no longer needs the HWDER Linux tools installed by hand in
+  WSL: they are downloaded the first time. The Deck package's readme, installer and launcher are now in English.
+
 ## FEW Recomp v0.1.0 (2026-11-24)
 
 First public release of the *Fire Emblem Warriors* port (source only: you build it from your own dump).

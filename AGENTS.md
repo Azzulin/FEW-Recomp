@@ -14,7 +14,8 @@ Recompilação estática de *Fire Emblem Warriors* (Switch, ARM64) para x86-64 n
 
 - Alvo: **US base v0 (RomFS) + update 1.5.0 (ExeFS inteiro) + DLCs**. O código recompilado é só o ExeFS do update
   (SDK 3.7.0, 5 módulos, layout do HWDE). A base v0 (SDK 1.6.0, 8 módulos) não é recompilada.
-- Windows primeiro; Steam Deck depois (o HWDER já tem o caminho Linux).
+- Windows (`gerar-few.ps1`) e Linux/Steam Deck (`build-linux.sh`, nativo e sem root; ou `gerar-deck.ps1` pelo WSL).
+  Mudou um passo do build? Mude nos dois caminhos e no `GUIDE.md`.
 - Identidade do jogo num lugar só: `runtime/include/hwder/game_profile.h` (C++) e `tools/game_profile.py` (Python).
 - Ganchos do HWDE (`runtime/src/game`, `runtime/src/interp`) desligados por `HW_GAME_HOOKS=OFF` até existirem
   símbolos do FEW em `tools/recomp/symbols.txt`. Os símbolos do HWDE ficam em `tools/recomp/games/hwde/` como

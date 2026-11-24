@@ -5,8 +5,8 @@
 ## English
 
 Static recompilation of *Fire Emblem Warriors* (Nintendo Switch, update 1.5.0) into a native x86-64 program with
-Vulkan rendering, for **Windows** and the **Steam Deck**. The game's ARM64 code is translated to C ahead of time and
-compiled with Clang; a runtime implements the Switch side (Horizon kernel, services, NVN/Maxwell GPU over Vulkan,
+Vulkan rendering, for **Windows**, **Linux** and the **Steam Deck**. The game's ARM64 code is translated to C ahead of
+time and compiled with Clang; a runtime implements the Switch side (Horizon kernel, services, NVN/Maxwell GPU over Vulkan,
 audio, video, file system). No emulator, no JIT.
 
 > [!IMPORTANT]
@@ -17,26 +17,32 @@ audio, video, file system). No emulator, no JIT.
 
 ### How to play
 
-1. Download `Source code (zip)` from the latest [release](https://github.com/Azzulin/FEW-Recomp/releases) (or
-   `git clone` this repository) and extract it to a short path, e.g. `C:\Games\FEW-Recomp`.
-2. Create `Game Files\` inside it and put there your NSPs — base `[0100F15003E64000]`, update 1.5.0
+1. Download the source from the latest [release](https://github.com/Azzulin/FEW-Recomp/releases) (or
+   `git clone` this repository) and extract it.
+2. Create a `Game Files` folder inside it with your NSPs — base `[0100F15003E64000]`, update 1.5.0
    `[0100F15003E64800]`, DLCs — and your `prod.keys`.
-3. Install [Git](https://git-scm.com/download/win) and [Python 3](https://www.python.org/downloads/windows/) if you
-   don't have them, open PowerShell in the folder and run:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch
-   ```
-   The first build downloads pinned build tools (no admin, no Visual Studio), translates and compiles the game:
-   roughly 45–90 minutes. Then play with `Jogar no PC\few.exe`.
+3. Build with one command:
 
-Steam Deck build (compiled on the PC in WSL), settings, saves, updating and troubleshooting:
-**[GUIDE.md](GUIDE.md)**.
+   | On | Run (in a terminal in the source folder) | The game ends up in |
+   |---|---|---|
+   | **Steam Deck / Linux** | `bash build-linux.sh` | `FireEmblemWarriors/` + a Steam shortcut |
+   | **Windows** | `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` | `Jogar no PC\few.exe` |
+
+   Nothing is installed on the system and no admin/`sudo` is needed: pinned build tools are downloaded once and
+   checked by SHA-256. The first build takes from under an hour (desktop PC) to a few hours (Steam Deck); it
+   resumes if interrupted, and later updates only rebuild what changed.
+
+**Step-by-step guide, including a Steam Deck walkthrough for people who never used Desktop Mode:
+[GUIDE.md](GUIDE.md).** It also covers building the Deck version on a Windows PC, settings, saves, updating and
+troubleshooting.
 
 ### Status
 
 - **Windows:** boot, videos, menus, save creation, cutscenes and battles, with the five DLCs mounted. Battles run
   at 60 fps in the game's own Performance mode (1280×720 like the Switch; 1080p optional) or 30 fps in Quality
   mode.
+- **Linux:** built natively, like the Deck version, for any distribution with glibc 2.35+ (SteamOS, Bazzite, Arch,
+  Fedora, Ubuntu 22.04+) with `build-linux.sh`; not yet played end to end outside the Deck.
 - **Steam Deck:** battles at 30 fps (the game's native pace) at 1280×720 with GPU particles; the densest fights can
   still dip below 30. 60 fps is an option in the F1 menu.
 - **Known limits:** resolution scaling stays at 1×; HWDER's extras tied to *Hyrule Warriors* addresses (120 fps,
@@ -59,12 +65,13 @@ module set and almost the same SDK (3.7.0 vs 3.5.1). Third-party sources are fet
 ## Português
 
 Recompilação estática de *Fire Emblem Warriors* (Switch, update 1.5.0) para um programa nativo x86-64 com Vulkan,
-para **Windows** e **Steam Deck**. **Nenhum arquivo do jogo está incluído**: é preciso a sua própria cópia (base,
-update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console.
+para **Windows**, **Linux** e **Steam Deck**. **Nenhum arquivo do jogo está incluído**: é preciso a sua própria cópia
+(base, update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console.
 
-Para jogar: baixe o código da última release (ou clone), crie `Game Files\` com os NSPs e o `prod.keys` e rode
-`powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch`. O jogo fica em `Jogar no PC\few.exe`. Steam
-Deck, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
+Para jogar: baixe o código da última release (ou clone), crie `Game Files` com os NSPs e o `prod.keys` e rode
+`bash build-linux.sh` (Steam Deck e Linux: o jogo fica em `FireEmblemWarriors/` e ganha atalho na Steam) ou
+`powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` (Windows: `Jogar no PC\few.exe`). Passo a passo,
+inclusive para o Steam Deck, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
 
 Documentação técnica (pt-BR):
 

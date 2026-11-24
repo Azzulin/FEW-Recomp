@@ -1,3 +1,7 @@
+> [!NOTE]
+> Inherited from HWDER and kept as reference; it describes the original project's build flow, not this port's.
+> To build and play Fire Emblem Warriors (Windows, Linux, Steam Deck), see [GUIDE.md](../GUIDE.md).
+
 > Players should use the setup zip and HWDER Setup.exe, which installs its own verified private tools; see [Windows setup](windows-setup.md). The commands below describe the retained developer CLI with installed Python/VS prerequisites. The CLI does not automatically install private tools or migrate its older cache root.
 
 # Local first-run build

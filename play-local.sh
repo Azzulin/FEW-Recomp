@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# All generated game code, compiler output, saves and caches stay local.
+# Kept for HWDER habits: builds (or updates) the Linux version and starts it. See build-linux.sh.
 set -eu
-task_source_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec python3 "$task_source_dir/tools/first_run.py" --launch "$@"
+here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec bash "$here/build-linux.sh" --launch "$@"

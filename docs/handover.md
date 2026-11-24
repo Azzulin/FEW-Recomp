@@ -5,11 +5,28 @@ atualize ao terminar uma sessão.
 
 ## Release pública (2026-11-24)
 
-Primeira release **v0.1.0** (só código; cada um gera a partir do próprio dump). Para jogadores: `README.md` e
-`GUIDE.md`, em inglês. O `gerar-deck.ps1` passou a chamar o WSL com `-u root` (os caminhos são `/root/few` e
-`/root/hwder`) e a achar o NSP base pelo título `[0100F15003E64000]`, como o `gerar-few.ps1`. O GUIDE ensina a
-instalar o toolchain Linux do HWDER v0.3.5 no WSL (`linux_setup.py toolchain` com `XDG_DATA_HOME=/root/hwder/data`).
-Nova release: atualizar o `CHANGELOG.md`, criar a tag `vX.Y.Z` e publicar com notas em inglês.
+Releases **v0.1.0** e **v0.2.0** (só código; cada um gera a partir do próprio dump; o repositório segue privado).
+Para jogadores: `README.md` e `GUIDE.md`, em inglês. Nova release: atualizar o `CHANGELOG.md`, criar a tag `vX.Y.Z` e
+publicar com notas em inglês.
+
+- **`build-linux.sh`** (raiz) → `tools/linux/few_build.py`: build nativo no Linux e no próprio Deck, sem root.
+  Usa o Python do sistema (só biblioteca padrão) e o `linux_setup.install_toolchain` do HWDER para o toolchain fixado
+  (`tools/linux/toolchain.json`), em `~/.local/share/FEW-Recomp/HWDER/toolchain/<id>`; o `linux-deps` vem da
+  tarball Linux do HWDER v0.3.5 (SHA-256 fixado no script) em `~/.local/share/FEW-Recomp/linux-deps`; imgui e os
+  headers SPIR-V/Vulkan nos commits do `gerar-few.ps1` (git ou tarball do GitHub). Depois: `data/update`,
+  `generated/`, `build/linux` (com `build.log`) e a pasta do jogo `FireEmblemWarriors/` (caminhos absolutos no
+  `.ini`; no Deck, os padrões do Deck e `hwder_env.txt` com `HWDER_FRAME_OVERLAP=1`), atalho na Steam por
+  `steam_shortcut.py`. No Deck detecta `board_vendor=Valve` e usa `-march=znver2`. Roda sob `systemd-inhibit`
+  quando permitido. Recusa pastas em exFAT/FAT/NTFS (sem bit de execução).
+- `gerar-deck.ps1` chama o WSL com `-u root` e acha o NSP base pelo título; o `build-deck-wsl.sh`, sem o toolchain
+  em `/root/hwder`, chama `few_build.py --tools-only --tools-dir /root/few/tools`. Os textos da pasta do Deck
+  (`LEIA-ME.txt`, `instalar-no-deck.sh`, `few-steam.sh`, `hwder_env.txt`) agora são em inglês.
+- Teste de 2026-11-24: build completo do zero com o `build-linux.sh` no WSL `Ubuntu-24.04` (Ubuntu 24.04, root, sem
+  nada instalado antes): ferramentas (~5 min, o zig vem devagar do ziglang.org), update, C e 495 passos de
+  compilação com 10 jobs, **106 min** no total; `few` de 678 MB, só `libc`/`libm`/`ld-linux`, glibc máxima 2.35.
+  Rodado 45 s com `HWDER_OFFSCREEN=1`: leu base, update 1.5.0, chaves e as 5 DLCs pelo `.ini`, 5 módulos, Vulkan
+  (llvmpipe no WSL), janela aberta. **Falta**: o build no próprio Deck (tempo e memória com o Steam aberto no Modo
+  Desktop) e o atalho da Steam criado pelo script num Deck/Linux real. A pasta de teste foi apagada.
 
 ## Retomar aqui (2026-11-16)
 

@@ -14,6 +14,7 @@
        hwder_settings.ini      perfil do Deck (caminhos relativos)
        few-steam.sh            lançador que a Steam usa
        instalar-no-deck.sh     rode uma vez no Deck: marca como executável e cria o atalho na Steam
+       LEIA-ME.txt             instruções para o jogador (em inglês)
        tools\                  steam_shortcut.py + game_profile.py (usados pelo instalador)
   Enviar: bash tools/deck/enviar-para-deck.sh (SSH, retoma e confere SHA-256).
 
@@ -109,48 +110,48 @@ res_630p=1
 
 WriteLF "$out\few-steam.sh" @'
 #!/bin/sh
-# Lançador do atalho "Fire Emblem Warriors" na Steam (escrito por gerar-deck.ps1).
-# Batalha no modo Qualidade do jogo (30 fps, o ritmo nativo do FEW no Switch) com o 3D a 1280x720, a altura da tela
-# do Deck ("720p at 30 fps" no menu F1). 60 fps: "60 fps battles", a 720p ("1080p at 60 fps" desligado).
-# Um .ini de um build antigo não tem todas as chaves: as que faltam entram com o padrão do Deck; depois da primeira
-# gravação vale o que estiver no menu.
+# Launcher for the "Fire Emblem Warriors" Steam shortcut (written by gerar-deck.ps1).
+# Battles in the game's Quality mode (30 fps, FEW's native pace on the Switch) with the 3D at 1280x720, the height of
+# the Deck's screen ("720p at 30 fps" in the F1 menu). 60 fps: "60 fps battles", at 720p ("1080p at 60 fps" off).
+# A settings file from an older build lacks some keys: the missing ones get the Deck's defaults; after the first
+# save, whatever is in the menu applies.
 cd "$(dirname -- "$0")" || exit 1
 if [ -f hwder_settings.ini ]; then
     for kv in fps60=0 fps60_1080p=0 fps30_720p=1 res_630p=1; do
         grep -q "^${kv%%=*}=" hwder_settings.ini && continue
-        [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # o .ini pode terminar sem quebra de linha
+        [ -n "$(tail -c 1 hwder_settings.ini)" ] && echo >> hwder_settings.ini  # the file may end without a newline
         echo "$kv" >> hwder_settings.ini
     done
 fi
-# As variáveis do jogo (sobreposição de quadros etc.) ficam em hwder_env.txt, que o próprio few lê: valem também
-# quando a Steam abre o few direto, sem passar por este lançador.
+# The game's variables (frame overlap etc.) are in hwder_env.txt, which few reads itself: they also apply when Steam
+# starts few directly, without this launcher.
 exec ./few "$@"
 '@
 
 WriteLF "$out\hwder_env.txt" @'
-# Variáveis do few (NOME=VALOR), lidas pelo próprio jogo ao abrir. Uma variável já definida no ambiente vence.
-# Sobreposição de quadros: o jogo prepara o quadro seguinte enquanto a GPU desenha o atual. Segura os 30 fps na
-# luta densa com as partículas (Deck, 2026-11-15: 29,8 fps contra 24-29 em série). Apague a linha para desligar.
+# Variables for the game (NAME=VALUE), read by few itself when it starts. A variable set in the environment wins.
+# Frame overlap: the game prepares the next frame while the GPU draws the current one; holds 30 fps in dense fights
+# with the GPU particles (Deck, 2026-11-15: 29.8 fps against 24-29 without it). Delete the line to turn it off.
 HWDER_FRAME_OVERLAP=1
 '@
 
 WriteLF "$out\instalar-no-deck.sh" @'
 #!/bin/sh
-# Fire Emblem Warriors no Steam Deck - rode UMA vez no Modo Desktop (Konsole), dentro desta pasta:
+# Fire Emblem Warriors on the Steam Deck - run ONCE in Desktop Mode (Konsole, or F4 in Dolphin), inside this folder:
 #     sh instalar-no-deck.sh
-# Marca o jogo como executável e adiciona "Fire Emblem Warriors" à Steam (fecha e reabre a Steam).
-# Se mover a pasta depois, rode de novo para atualizar o atalho.
+# Makes the game executable and adds "Fire Emblem Warriors" to Steam (Steam closes and reopens).
+# If you move the folder later, run it again to update the shortcut.
 set -eu
 DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$DIR"
-[ -f few ] || { echo "ERRO: falta $DIR/few"; exit 1; }
-ls ./*.nsp >/dev/null 2>&1 || echo "AVISO: nenhum .nsp nesta pasta."
-[ -f prod.keys ] || echo "AVISO: falta prod.keys nesta pasta."
-[ -f update/romfs.patch ] || echo "AVISO: falta a pasta update (o jogo precisa do update 1.5.0)."
+[ -f few ] || { echo "ERROR: $DIR/few is missing"; exit 1; }
+ls ./*.nsp >/dev/null 2>&1 || echo "WARNING: no .nsp in this folder."
+[ -f prod.keys ] || echo "WARNING: prod.keys is missing from this folder."
+[ -f update/romfs.patch ] || echo "WARNING: the update folder is missing (the game needs update 1.5.0)."
 chmod +x few few-steam.sh
-[ -x few ] || { echo "ERRO: o cartão não aceita arquivos executáveis (exFAT/FAT?). Use um cartão ext4."; exit 1; }
+[ -x few ] || { echo "ERROR: this drive cannot hold executable files (exFAT/FAT?). Use internal storage or an ext4 card."; exit 1; }
 mkdir -p save
-echo "pasta do jogo: $DIR"
+echo "game folder: $DIR"
 python3 - "$DIR/few" "$@" <<'PY'
 import sys
 from pathlib import Path
@@ -160,31 +161,31 @@ import steam_shortcut
 ok = steam_shortcut.add_to_steam(exe, assume_yes=True if "--yes" in sys.argv[2:] else None)
 sys.exit(0 if ok else 1)
 PY
-echo "Pronto. Abra 'Fire Emblem Warriors' na biblioteca da Steam (aba Não Steam)."
+echo "Done. Open 'Fire Emblem Warriors' in your Steam library (Non-Steam tab)."
 '@
 
 WriteLF "$out\LEIA-ME.txt" @'
-Fire Emblem Warriors para Steam Deck (recompilação estática, compilada no PC a partir da sua própria cópia)
-=========================================================================================================
+Fire Emblem Warriors for the Steam Deck (static recompilation, built on a PC from your own copy)
+================================================================================================
 
-Pasta autossuficiente: o "few" acha o jogo (.nsp da base e das DLCs), as chaves, o update (pasta update) e os
-saves (pasta save) dentro da própria pasta. Nenhum caminho fixo; pode mover a pasta.
+Self-contained folder: "few" finds the game (.nsp of the base game and DLCs), the keys, the update (update folder)
+and the saves (save folder) inside its own folder. No fixed paths; you can move the folder.
 
-Primeira vez: Modo Desktop > Dolphin > esta pasta > F4 (terminal aqui) >  sh instalar-no-deck.sh
-O jogo aparece na biblioteca da Steam, aba Não Steam: "Fire Emblem Warriors".
-O "Adicionar jogo não Steam" do Modo Jogo não mostra o few-steam.sh (é um script): use o instalador acima, que
-também roda por SSH ou pelo Konsole com  sh instalar-no-deck.sh --yes  (a Steam fecha e reabre sozinha).
+First time: Desktop Mode > Dolphin > this folder > F4 (terminal here) >  sh instalar-no-deck.sh
+The game then shows up in your Steam library, Non-Steam tab: "Fire Emblem Warriors".
+Gaming Mode's "Add a Non-Steam Game" does not list few-steam.sh (it is a script): use the installer above, which
+also works over SSH or in Konsole with  sh instalar-no-deck.sh --yes  (Steam closes and reopens by itself).
 
-- Compilado para o processador do Deck (Zen 2, -march=znver2): não roda em CPUs sem as mesmas instruções.
-- A batalha roda a 30 fps, o ritmo do próprio jogo no Switch (modo Qualidade), com o 3D a 1280x720 (a tela do
-  Deck tem 800 linhas; "720p at 30 fps" no menu F1 volta a 1920x1080); menus a 60. Menu F1: "60 fps battles"
-  liga o modo Desempenho (60 fps a 1280x720; "1080p at 60 fps" é pesado demais para o Deck).
-  Não force 30 fps na Steam nos menus (60 fps).
-- A primeira batalha de cada sessão pode parar ~2 s no começo compilando os shaders de cálculo.
-- Os primeiros minutos engasgam compilando shaders; os caches (pipeline_cache.bin, pipeline_warmup.bin) ficam
-  aqui e o engasgo diminui com o uso.
-- F1 (ou segurar View) abre o menu do runtime. F2 liga/desliga as batalhas a 60 fps na hora (no Deck: mapeie
-  um botão traseiro para F2 no layout do controle da Steam). Log: hwder.log nesta pasta.
+- Built for the Deck's processor (Zen 2, -march=znver2): it does not run on CPUs without the same instructions.
+- Battles run at 30 fps, the game's own pace on the Switch (Quality mode), with the 3D at 1280x720 (the Deck's
+  screen has 800 lines; "720p at 30 fps" in the F1 menu goes back to 1920x1080); menus at 60. F1 menu:
+  "60 fps battles" turns on Performance mode (60 fps at 1280x720; "1080p at 60 fps" is too heavy for the Deck).
+- The first battle of each session can pause ~2 s at the start while compute shaders compile.
+- The first minutes stutter while shaders compile; the caches (pipeline_cache.bin, pipeline_warmup.bin) stay here
+  and the stutter goes down with use.
+- F1 (or holding View) opens the runtime menu. F2 toggles 60 fps battles on the fly (on the Deck: map a back
+  button to F2 in Steam's controller layout). Log: hwder.log in this folder.
+- Full guide: GUIDE.md in the source folder.
 '@
 
 Write-Host "`nPasta pronta em $out" -ForegroundColor Green
