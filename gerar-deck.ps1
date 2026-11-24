@@ -48,7 +48,7 @@ if (-not $SoMontar -and -not $SoDados) {
     Add-Type -Namespace Few -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
     [void][Few.Power]::SetThreadExecutionState([uint32]2147483651)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
     try {
-        & wsl.exe -d $Distro --exec env "FEW_JOBS=$Jobs" "FEW_MARCH=$March" bash (WinToWsl (Join-Path $root 'tools\deck\build-deck-wsl.sh')) (WinToWsl $root)
+        & wsl.exe -d $Distro -u root --exec env "FEW_JOBS=$Jobs" "FEW_MARCH=$March" bash (WinToWsl (Join-Path $root 'tools\deck\build-deck-wsl.sh')) (WinToWsl $root)
     } finally {
         [void][Few.Power]::SetThreadExecutionState([uint32]2147483648)
     }
@@ -60,7 +60,7 @@ Write-Host "==> Montando $out" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $out, "$out\tools", "$out\save", "$out\update\exefs" | Out-Null
 $dst = WinToWsl $out
 if (-not $SoDados) {
-    & wsl.exe -d $Distro --exec sh -c "set -e; test -f '$WslBuild/few'; cp -f '$WslBuild/few' '$dst/few'; sha256sum '$WslBuild/few'"
+    & wsl.exe -d $Distro -u root --exec sh -c "set -e; test -f '$WslBuild/few'; cp -f '$WslBuild/few' '$dst/few'; sha256sum '$WslBuild/few'"
     if ($LASTEXITCODE) { Fail "não achei o build Linux em $WslBuild (rode sem -SoMontar)" }
 }
 
@@ -74,8 +74,9 @@ function Link([string]$link, [string]$target) {
     }
 }
 $games = Join-Path $root 'Game Files'
-$nsps = @(Get-ChildItem -LiteralPath $games -Filter *.nsp | Where-Object { $_.Name -notmatch '\[UPD\]' })
-if (-not ($nsps | Where-Object Name -match '\[Base\]')) { Fail "NSP base não encontrado em $games" }
+# Identifica pelo título entre colchetes (como o gerar-few.ps1), não pelas etiquetas [Base]/[UPD] do nome.
+$nsps = @(Get-ChildItem -LiteralPath $games -Filter *.nsp | Where-Object { $_.Name -notmatch '\[0100F15003E64800\]' })
+if (-not ($nsps | Where-Object Name -match '\[0100F15003E64000\]')) { Fail "NSP base [0100F15003E64000] não encontrado em $games" }
 Get-ChildItem -LiteralPath $out -Filter *.nsp | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 foreach ($n in $nsps) { Link (Join-Path $out $n.Name) $n.FullName }
 foreach ($k in 'prod.keys', 'title.keys') {

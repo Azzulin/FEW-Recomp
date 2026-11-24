@@ -1,5 +1,9 @@
 # Linux release (player install)
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 The Linux download is `HWDER-linux-x86_64-<version>.tar.gz`. Like the Windows zip it holds no game code: HWDER
 Setup builds the game on the player's machine from their own dump. Target: Bazzite and SteamOS (immutable, nothing
 installed on the system, no container); Fedora, Ubuntu 22.04+ and Arch should work (glibc 2.35 or newer, Python 3.8+,

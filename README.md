@@ -1,62 +1,86 @@
-# Fire Emblem Warriors — recompilação estática para PC
+# FEW Recomp
 
-Port nativo de *Fire Emblem Warriors* (Switch) para Windows x64, gerado a partir da cópia do próprio dono. O código
-ARM64 do jogo é traduzido para C antes de rodar e compilado com Clang; o sistema do Switch (kernel Horizon, serviços,
-GPU Maxwell, áudio, vídeo, sistema de arquivos) é implementado pelo runtime. Sem emulador, sem JIT.
+**[English](#english)** · **[Português](#português)**
 
-O runtime vem do [HWDER](https://github.com/blocker-3/HWDER) v0.3.5 (MIT), o port de *Hyrule Warriors: Definitive
-Edition*: mesma engine (Koei Tecmo KTGL sobre NVN) e, no update 1.5.0 do Fire Emblem Warriors, o mesmo conjunto de
-módulos e quase o mesmo SDK (3.7.0 contra 3.5.1). Detalhes em [docs/few.md](docs/few.md) e
-[docs/how-it-works.md](docs/how-it-works.md).
+## English
 
-**Este repositório não contém nada do jogo**: nem dump, nem chaves, nem código traduzido, nem executável gerado.
+Static recompilation of *Fire Emblem Warriors* (Nintendo Switch, update 1.5.0) into a native x86-64 program with
+Vulkan rendering, for **Windows** and the **Steam Deck**. The game's ARM64 code is translated to C ahead of time and
+compiled with Clang; a runtime implements the Switch side (Horizon kernel, services, NVN/Maxwell GPU over Vulkan,
+audio, video, file system). No emulator, no JIT.
 
-## Estado
+> [!IMPORTANT]
+> **No game files are included** — no dump, keys, translated code or executable, in the repository or in the
+> releases. You need your own copy, legally obtained and dumped from your own console: the base game, update
+> **1.5.0** and, optionally, the DLCs, plus your `prod.keys`. Instructions for getting those files will not be
+> given. The game is built from your files, on your machine; the result is for your own use only.
 
-Roda nativo no Windows e no Steam Deck: boot, vídeos, menus, criação de save, cutscenes e a batalha do prólogo
-(com as partículas da GPU), com as cinco DLCs montadas pelo jogo. No PC a batalha roda a 60 fps no modo
-Desempenho do próprio jogo, ligado pelo runtime (`fps60=1`, a 720p como no Switch; `fps60_1080p=1` para 1080p).
-No Steam Deck a batalha roda no modo Qualidade (30 fps, o ritmo nativo do FEW) a 720p, com as partículas; a luta
-densa fica em 26–28 fps, com quedas a ~20 fps nos trechos mais pesados (trabalho em andamento, ver o handover). Os extras do HWDER que dependem de endereços do
-Hyrule Warriors (120 fps, ultrawide, LOD do cenário) estão desligados (`HW_GAME_HOOKS=OFF`) e a escala de resolução
-fica em 1x por enquanto. Detalhes, pendências e armadilhas em [docs/handover.md](docs/handover.md).
+### How to play
 
-## Arquivos do jogo
+1. Download `Source code (zip)` from the latest [release](https://github.com/Azzulin/FEW-Recomp/releases) (or
+   `git clone` this repository) and extract it to a short path, e.g. `C:\Games\FEW-Recomp`.
+2. Create `Game Files\` inside it and put there your NSPs — base `[0100F15003E64000]`, update 1.5.0
+   `[0100F15003E64800]`, DLCs — and your `prod.keys`.
+3. Install [Git](https://git-scm.com/download/win) and [Python 3](https://www.python.org/downloads/windows/) if you
+   don't have them, open PowerShell in the folder and run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch
+   ```
+   The first build downloads pinned build tools (no admin, no Visual Studio), translates and compiles the game:
+   roughly 45–90 minutes. Then play with `Jogar no PC\few.exe`.
 
-Coloque em `Game Files\` (ignorado pelo git):
+Steam Deck build (compiled on the PC in WSL), settings, saves, updating and troubleshooting:
+**[GUIDE.md](GUIDE.md)**.
 
-```
-Game Files\
-  Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp
-  Fire Emblem Warriors [0100F15003E64800][v327680][1.5.0][UPD][US].nsp
-  Fire Emblem Warriors [...][0100F15003E6500x][US][...].nsp      # DLCs: lidas da mesma pasta
-prod.keys                                                     # na raiz ou em Game Files\
-```
+### Status
 
-## Gerar e jogar (Windows)
+- **Windows:** boot, videos, menus, save creation, cutscenes and battles, with the five DLCs mounted. Battles run
+  at 60 fps in the game's own Performance mode (1280×720 like the Switch; 1080p optional) or 30 fps in Quality
+  mode.
+- **Steam Deck:** battles at 30 fps (the game's native pace) at 1280×720 with GPU particles; the densest fights can
+  still dip below 30. 60 fps is an option in the F1 menu.
+- **Known limits:** resolution scaling stays at 1×; HWDER's extras tied to *Hyrule Warriors* addresses (120 fps,
+  ultrawide, LOD) are off; only the US release with update 1.5.0 is supported; shader stutter the first time each
+  scene is seen. Progress notes (Portuguese): [docs/handover.md](docs/handover.md).
 
-```powershell
-.\gerar-few.ps1          # update -> C -> compila -> publica em ".\Jogar no PC"
-.\gerar-few.ps1 -Launch  # idem e abre
-```
+### Found a problem?
 
-Usa o toolchain privado do HWDER (Python, LLVM-MinGW, CMake, Ninja), sem Visual Studio e sem admin; se ele não
-existir na máquina, o script instala um igual (`tools/managed_tools.py`). Saídas: `data\update` (update
-desempacotado), `generated\` (C), `build\pc` (objetos), `Jogar no PC\few.exe`. Tudo ignorado pelo git.
+Open an issue at <https://github.com/Azzulin/FEW-Recomp/issues> with your hardware, what happened and the
+`hwder.log` from the game folder ([how to report](GUIDE.md#9-reporting-a-problem)). Never attach game files, keys,
+the built executable or saves.
 
-## Steam Deck
+### Credits
 
-```powershell
-.\gerar-deck.ps1                          # depois do gerar-few.ps1: build Linux no WSL para o Zen 2 do Deck
-bash tools/deck/enviar-para-deck.sh       # Git Bash: envia por SSH à pasta Games do cartão SD
-```
+The runtime and recompiler come from [HWDER](https://github.com/blocker-3/HWDER) v0.3.5 (MIT), the port of
+*Hyrule Warriors: Definitive Edition*: same engine (Koei Tecmo KTGL over NVN) and, in FEW update 1.5.0, the same
+module set and almost the same SDK (3.7.0 vs 3.5.1). Third-party sources are fetched at pinned commits
+([third_party/README.md](third_party/README.md)).
 
-Compila no WSL (archlinux) com o toolchain Linux do HWDER (glibc 2.35) e `-march=znver2`, monta
-`Envio Deck\FireEmblemWarriors` (jogo, NSPs e chaves por hardlink, update, ajustes) e envia. No Deck, uma vez:
-`sh instalar-no-deck.sh` na pasta do jogo cria o atalho na Steam. No Deck as partículas da GPU ficam desligadas
-(`HWDER_GMEM=0` no lançador): com elas a batalha cai para ~3,5 fps; sem elas roda a 30 fps. Detalhes em
-[docs/handover.md](docs/handover.md#steam-deck).
+## Português
 
-## Licença
+Recompilação estática de *Fire Emblem Warriors* (Switch, update 1.5.0) para um programa nativo x86-64 com Vulkan,
+para **Windows** e **Steam Deck**. **Nenhum arquivo do jogo está incluído**: é preciso a sua própria cópia (base,
+update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console.
 
-MIT (ver `LICENSE`), herdada do HWDER. *Fire Emblem Warriors* pertence à Nintendo e à Koei Tecmo.
+Para jogar: baixe o código da última release (ou clone), crie `Game Files\` com os NSPs e o `prod.keys` e rode
+`powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch`. O jogo fica em `Jogar no PC\few.exe`. Steam
+Deck, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
+
+Documentação técnica (pt-BR):
+
+| Documento | Conteúdo |
+|---|---|
+| [docs/handover.md](docs/handover.md) | estado atual, como testar, pendências e armadilhas |
+| [docs/few.md](docs/few.md) | fatos medidos no dump (módulos, hashes, SDK, RomFS, DLC, vídeos) |
+| [docs/how-it-works.md](docs/how-it-works.md) | arquitetura herdada do HWDER (recompilador, kernel, serviços, GPU) |
+| [docs/environment-variables.md](docs/environment-variables.md) | variáveis de diagnóstico (`HWDER_*`) |
+| [AGENTS.md](AGENTS.md) | regras do projeto para quem desenvolve (pessoa ou agente) |
+
+Os documentos `docs/playing.md`, `docs/releasing.md`, `docs/windows-setup*.md`, `docs/linux-release.md` e
+`docs/antivirus.md` descrevem o *HWDER Setup* do projeto de origem, que não é usado aqui; ficam como referência.
+
+## License
+
+MIT ([LICENSE](LICENSE)), inherited from HWDER. Third-party code keeps its own license. The license grants nothing
+about the game. Fan project, non-commercial, not affiliated with Nintendo or Koei Tecmo; *Fire Emblem Warriors* and
+*Nintendo Switch* are trademarks of their respective owners.

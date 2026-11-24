@@ -1,5 +1,9 @@
 # Releasing the setup zip
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 The player download is `HWDER-setup-<version>.zip`: the project source, the pinned third-party
 source with its licence files, and the code-free `HWDER Setup.exe`. It contains no game code,
 keys or game files; Prepare builds the game on the player's PC from their own dump.

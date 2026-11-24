@@ -1,5 +1,9 @@
 # Antivirus warnings and verifying a download
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 Some players get a "virus detection" for `HWDER Setup.exe` from the setup zip. Microsoft Defender
 names it `Trojan:Win32/Wacatac.B!ml`. This page explains what that name means, how to check your
 copy and get Setup running again, and what is in the download.

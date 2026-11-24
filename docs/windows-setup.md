@@ -1,5 +1,9 @@
 # Windows setup (HWDER Setup.exe)
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 Merged (one-button flow, R7, 2026-10-22; see [windows-setup-ux.md](windows-setup-ux.md)). Windows only. Players get it in the setup zip `HWDER-setup-<version>.zip`. The exe is not code-signed, so Windows SmartScreen may ask for confirmation (More info > Run anyway). The native window opens before Python exists and contains no game code. Real preparation and gameplay have been completed on the maintainer's PC; other machines and graphics correctness are covered by playtests, not by this tool.
 
 Extract the complete kit and open **HWDER Setup.exe**, keeping its source folder beside it. One main button leads through Next, Install, Prepare and Play; the Data folder and every secondary action sit under **Advanced**. Choose the Data folder before installing tools. It contains private tools, generated/build stages and `play/` with the executable, settings and saves. The default is Local AppData/HWDER. Existing CLI users may select their older Local AppData/hwder/local-build-v1 root to reuse its data; the wizard does not migrate folders automatically.

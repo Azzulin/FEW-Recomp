@@ -6,7 +6,7 @@ Recompilação estática de *Fire Emblem Warriors* (Switch, ARM64) para x86-64 n
 ## Comece por aqui
 
 1. [docs/handover.md](docs/handover.md): estado, como testar, pendências e armadilhas. Atualize ao terminar.
-2. [README.md](README.md): o que é e como gerar.
+2. [README.md](README.md) e [GUIDE.md](GUIDE.md): o que é, como gerar e jogar (em inglês, para quem baixa a release).
 3. [docs/few.md](docs/few.md): fatos medidos no dump (módulos, hashes, SDK, RomFS, DLC, vídeos). Fonte de verdade sobre o jogo.
 4. [docs/how-it-works.md](docs/how-it-works.md): arquitetura herdada do HWDER (recompilador, kernel, serviços, GPU).
 
@@ -35,5 +35,6 @@ Recompilação estática de *Fire Emblem Warriors* (Switch, ARM64) para x86-64 n
 
 ## Idioma
 
-Documentação em português (pt-BR). Código e identificadores em inglês, como no HWDER. Mensagens de commit são frases
+Documentação em português (pt-BR), exceto `README.md` (inglês com resumo em português), `GUIDE.md` e as notas de
+release, em inglês para os jogadores. Código e identificadores em inglês, como no HWDER. Mensagens de commit são frases
 simples, sem prefixos de tipo.

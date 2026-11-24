@@ -1,36 +1,50 @@
 # Changelog
 
-## v0.3.5 (2026-11-01)
+## FEW Recomp v0.1.0 (2026-11-24)
+
+First public release of the *Fire Emblem Warriors* port (source only: you build it from your own dump).
+
+- Builds from the US base game + update 1.5.0 (whole ExeFS recompiled) + DLCs with `gerar-few.ps1` on Windows,
+  and for the Steam Deck with `gerar-deck.ps1` (WSL). Step-by-step instructions in [GUIDE.md](GUIDE.md).
+- Windows: boot, videos, menus, saves, cutscenes and battles; 60 fps battles through the game's Performance mode.
+- Steam Deck: 30 fps battles (the game's native pace) at 1280x720 with GPU particles and frame overlap.
+- `gerar-deck.ps1` now runs the WSL build as root on any distro and finds the base NSP by title ID.
+
+## HWDER history
+
+Everything below is the changelog of [HWDER](https://github.com/blocker-3/HWDER), the runtime this port is built on.
+
+### v0.3.5 (2026-11-01)
 
 - **Linux Setup explains a damaged release instead of stopping at version.txt** (reported in #8). `version.txt` is the last file in the tarball and the last one Setup checks, so an unpack or download that did not finish, or a release unpacked over an older HWDER folder, failed there. When `release.json`'s version and commit reproduce the expected `version.txt`, Setup now rewrites it and continues. Otherwise the error names the file, the folder checked, what it found and the expected version, and says to unpack into a new, empty folder. README-LINUX now says to use a new folder for each version. `HWDER Setup.exe` is unchanged (Setup 1.0.0, the same file as in v0.3.4).
 
-## v0.3.4 (2026-11-01)
+### v0.3.4 (2026-11-01)
 
 - **GTX 10-series graphics cards can start the game** (reported in #7 and #2). HWDER asked the driver for a fixed list of Vulkan features, including 16-bit float shader support, which GTX 10-series (Pascal) drivers do not offer, so the game stopped at startup with "did not accept the features HWDER needs (error -8)". HWDER now asks the card what it supports, requires only what it really uses (timeline semaphores and dynamic rendering) and turns the rest on where available. If a card lacks a required feature, the message names it instead of claiming Vulkan 1.2 is missing.
 - **Intel UHD 620 crash after Legend Mode's first movie worked around** (reported in #6). The Intel driver crashed in the renderer's fast colour clear on every driver version tried. HWDER now clears with the regular path on Intel GPUs (and on any GPU when the target's format cannot be drawn to). Other GPUs keep the fast clear.
 - New debug switches for testing these: `HWDER_MASK_FEATURES` (treat named Vulkan features as missing) and `HWDER_NO_FAST_CLEAR` (use the regular clear on any GPU). See [docs/environment-variables.md](docs/environment-variables.md).
 - **Fewer antivirus false positives for `HWDER Setup.exe`** (Microsoft Defender flagged v0.3.3 as `Trojan:Win32/Wacatac.B!ml`). Setup now has an icon, an application manifest and version information, ships without debug symbols (2.1 MB down to 1.2 MB), and no longer starts PowerShell hidden or suspended: its console is visible, minimized. Setup is now built reproducibly with its own version (1.0.0), so an unchanged Setup is the identical file in every release and keeps any antivirus reputation it has earned. Releases attach a `SHA256SUMS` file. [docs/antivirus.md](docs/antivirus.md) explains the detection and how to restore Setup.
 
-## v0.3.3 (2026-10-30, pre-release)
+### v0.3.3 (2026-10-30, pre-release)
 
 - **Fix: Linux Setup's build stopped at "Could NOT find OpenSSL" on the Steam Deck** (issue #1). The build looked for the system's OpenSSL for two test programs although HWDER bundles its own; SteamOS has no OpenSSL headers. The release build now uses the bundled library throughout.
 - **Linux Setup shows why a build failed.** It printed CMake's "CMake Error" line but hid the reason under it; it now shows the reason and the last build output.
 - Linux Setup no longer says the build happens "the first time only": it runs again after each HWDER update.
 - The Linux release build retries a failed download instead of stopping.
 
-## v0.3.2 (2026-10-30, pre-release)
+### v0.3.2 (2026-10-30, pre-release)
 
 - **Japanese release recognised** (issue #3). Setup accepts the Japanese game (title 01002AB007FD2000). It builds if its code matches a version HWDER knows; otherwise Setup names the build so it can be reported. The game asks for Japanese text with it.
 - **Try anyway (may crash).** A Setup option (Windows: under Advanced; Linux: next to Prepare) that builds a game version HWDER does not recognise with the closest known version's layout. It works only if the code is laid out the same; otherwise the build or the game fails.
 
-## v0.3.1 (2026-10-30)
+### v0.3.1 (2026-10-30)
 
 - **Fix: the game no longer fails to start on PCs with Microsoft's Vulkan compatibility layer** (issue #2). Windows' OpenCL/OpenGL/Vulkan Compatibility Pack adds a Vulkan-on-Direct3D 12 device that HWDER cannot use; it could be picked over the real GPU driver. HWDER now skips devices without the Vulkan extensions it needs and prefers native drivers, and the error message no longer says Vulkan is missing when a device was only unusable.
 - **Fix: Linux Setup's build no longer fails at the final link** when the system has `ld.lld` on its PATH (issue #1).
 - **Version in the menus.** The startup menu and the F1 menu header show the HWDER version.
 - **Antivirus warnings.** Some players saw a virus warning when downloading v0.3.0. An audit of the v0.3.0 release found nothing malicious: both packages hold exactly the tagged source, `HWDER Setup.exe` is byte-identical to an independent build of that source except for its link timestamp, the tools Setup downloads match the official files, and Microsoft Defender reports no threats. Setup is still unsigned and starts PowerShell and downloads compilers, which heuristic scanners can dislike. [Antivirus warnings](docs/antivirus.md) explains what is flagged and why, and how to check your download against the SHA-256 GitHub lists next to each file. If your antivirus flags HWDER, please report the product and the detection name.
 
-## v0.3.0
+### v0.3.0
 
 - **Linux release.** HWDER now runs natively on Linux (tested on a ROG Ally with Bazzite, Game Mode included). Download `HWDER-linux-x86_64-<version>.tar.gz`, extract it and run `hwder-setup`: a Setup window (or `hwder-setup --cli` in a terminal) picks your game, keys and update 1.0.1, downloads the pinned build tools and builds the game on your machine. No container or extra packages; it adds menu entries and a Steam shortcut. Saves live in `~/.local/share/HWDER/save`.
 - **Mods.** A `mods` folder (LayeredFS) is laid over the game's files on Windows and Linux; see the README.
@@ -38,11 +52,11 @@
 - **Faster Setup.** The private build tools are checked once against their published SHA-256 when downloaded, then only by a quick stamp, and one copy is shared by every Setup you unpack, so an Update no longer installs or re-checks them. *Repair private tools* re-checks everything on request.
 - **Linux fixes:** battles render on newer Mesa drivers (depth format fallback); steady audio on PipeWire; A/B follow the button-label setting.
 
-## v0.2.2
+### v0.2.2
 
 - **Fix: Setup's Prepare builds the game again.** The new AVX2 startup check in v0.2.1 did not compile with the compiler Setup installs, so Prepare stopped with an error. Everything else is the same as v0.2.1.
 
-## v0.2.1
+### v0.2.1
 
 - **Steady 120 fps in big battles.** On busy stages the GPU command thread was the limit: 120 fps mode fell to about 73 fps on a ~1500-draw battle. It now holds 120 there, and native mode holds an exact 60.
 - **Performance cores first.** On hybrid CPUs (Intel P-cores and E-cores) the game prefers the performance cores. Set `HWDER_ALL_CORES=1` to let it use every core.
@@ -54,6 +68,6 @@
 - **Ultrawide.** Menus and loading screens no longer spill stretched parchment into the side bands.
 - **Fix: pressing + at startup no longer crashes.** + opens the game's electronic manual, which HWDER does not show; it now closes at once instead of crashing on the title screen.
 
-## v0.2.0 (2026-10-23)
+### v0.2.0 (2026-10-23)
 
 First release of this fork: guided Windows setup, local two-player co-op, the in-game HWDER menu, the optional 120 fps mode, controller and graphics options, and many rendering fixes. See the v0.2.0 release page for the full notes.

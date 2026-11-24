@@ -1,5 +1,9 @@
 # Playing HWDER
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 Everything about installing and playing on Windows that the [README](../README.md) only summarises. Linux players: see [Linux release](linux-release.md).
 
 ## Setup in detail

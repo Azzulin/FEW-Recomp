@@ -3,6 +3,14 @@
 Atualizado em 2026-11-19. **Próxima sessão: comece pela seção "Retomar aqui".** Leia antes de qualquer tarefa;
 atualize ao terminar uma sessão.
 
+## Release pública (2026-11-24)
+
+Primeira release **v0.1.0** (só código; cada um gera a partir do próprio dump). Para jogadores: `README.md` e
+`GUIDE.md`, em inglês. O `gerar-deck.ps1` passou a chamar o WSL com `-u root` (os caminhos são `/root/few` e
+`/root/hwder`) e a achar o NSP base pelo título `[0100F15003E64000]`, como o `gerar-few.ps1`. O GUIDE ensina a
+instalar o toolchain Linux do HWDER v0.3.5 no WSL (`linux_setup.py toolchain` com `XDG_DATA_HOME=/root/hwder/data`).
+Nova release: atualizar o `CHANGELOG.md`, criar a tag `vX.Y.Z` e publicar com notas em inglês.
+
 ## Retomar aqui (2026-11-16)
 
 **Build `8d32b02d…` enviado ao Deck em 2026-11-19 às ~21:50** (SHA-256 conferido): o de `465354ac…` mais o

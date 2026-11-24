@@ -1,5 +1,9 @@
 # Windows setup window: one screen, one button (R5)
 
+> [!NOTE]
+> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
+> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+
 Design note for the R5 setup UX, 2026-10-21. It replaces the R4 button row
 (Check requirements / Install private tools / Prepare game / Play / shortcut /
 folder) with a single main button whose label follows the state of the
