@@ -211,7 +211,7 @@ despertar, esquiva, troca de personagem, câmera), `pause_menu.txt` (abre a paus
 ## Sessão de 2026-11-14: 60 fps na batalha com as partículas (interrompida)
 
 Pedido do dono: batalha a 60 fps como o HWDER faz no HWDE, **sem desligar partículas**; testar no PC/WSL e levar ao
-Deck depois. Commitado em partes (de `231cdd4` em diante); o `few.exe` de `Jogar no PC` e o `few` de `Envio Deck`
+Deck depois. Commitado em partes (de `ed07277` em diante); o `few.exe` de `Jogar no PC` e o `few` de `Envio Deck`
 têm tudo.
 
 ### 1. Controle de fluxo estruturado no tradutor de shaders (falta validar no Deck)
@@ -484,7 +484,7 @@ Medido no Deck com `HWDER_GPU_TIMING=5`, `HWDER_GPU_TIMING_DRAWS=1` (novo: tempo
 - **Causa**: o tradutor supunha warps de 32 lanes e a AMD roda waves de 64. `SR_LANEID`, as máscaras `SR_*MASK`,
   `VOTE` (só a componente 0 da votação) e `SHFL` erravam na segunda metade da wave, e os atômicos agregados por warp
   do NVN (contagem por `popc(vote)`, vaga por `popc(vote & LTMASK)`) montavam listas erradas. Corrigido em
-  `72ed05f`: as operações de warp agem dentro da metade de 32 lanes (`warp_lane`, `warp_ballot` em `program.cpp`).
+  `6081ff3`: as operações de warp agem dentro da metade de 32 lanes (`warp_lane`, `warp_ballot` em `program.cpp`).
   Na NVIDIA nada muda (medido: luta densa 52–55 fps, igual). **Falta medir no Deck** (o SSH parou de responder no
   meio da sessão).
 - DCC: as imagens de cor eram `MUTABLE_FORMAT` sem lista de formatos, o que no RADV (GFX10.3) desliga a compressão.
@@ -499,7 +499,7 @@ Medido no Deck com `HWDER_GPU_TIMING=5`, `HWDER_GPU_TIMING_DRAWS=1` (novo: tempo
 
 ## Sessão de 2026-11-15: batalha densa no Deck
 
-Medido no Deck (luta densa do `battle_long.txt`): **~10,6 fps** com a correção de warp (`72ed05f`). O passe
+Medido no Deck (luta densa do `battle_long.txt`): **~10,6 fps** com a correção de warp (`6081ff3`). O passe
 `e789f3db` mudou pouco (16,0 → 14,9 ms): as listas de luz longas não eram o principal. A linha do tempo
 (`HWDER_TIMELINE`) mostra, por quadro e em série: a thread de comandos grava ~14 ms com a GPU parada, a GPU trabalha
 ~60 ms e o jogo leva ~5 ms para entregar o quadro seguinte. **O gargalo é a GPU**: passes ~27–40 ms, despachos e
