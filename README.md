@@ -49,6 +49,35 @@ troubleshooting.
   ultrawide, LOD) are off; only the US release with update 1.5.0 is supported; shader stutter the first time each
   scene is seen. Progress notes (Portuguese): [docs/handover.md](docs/handover.md).
 
+### Project focus
+
+This port is different from a typical PC port in a few ways:
+
+- **Performance first, without straining the Steam Deck.** The main goal has been a steady frame rate on handheld
+  hardware with the game left intact: no effects are removed to hit a target. On the Deck the game runs at its
+  native pace (30 fps battles, as on the Switch) at the screen's 1280×720, with the GPU particles on. The work that
+  got there is mostly about doing less per frame rather than pushing the hardware harder:
+  - the CPU and GPU work on consecutive frames at the same time (frame overlap) instead of waiting for each other;
+  - only the memory pages the game changed are sent to or read back from the GPU;
+  - compute dispatches are chained without full barriers, and the shader translator follows AMD's 64-lane waves;
+  - the Deck build is compiled for its Zen 2 CPU, with AVX2 `memcmp`/`bcmp`;
+  - shaders compile in the background and are cached, so stutter fades with play;
+  - the game's own lower resolution step (1120×630) is used in heavy scenes.
+
+  60 fps stays available as an option for those who prefer it over battery life and heat.
+- **Built on another game's runtime.** The runtime and recompiler are [HWDER](https://github.com/blocker-3/HWDER)'s,
+  made for *Hyrule Warriors: Definitive Edition*, which uses the same Koei Tecmo engine. Only the code of update
+  1.5.0 is recompiled. HWDER's patches that depend on *Hyrule Warriors* addresses are off until this game's own
+  symbols are mapped.
+- **You build it, on your machine.** Nothing of the game is distributed: each player's computer builds the game
+  from their own dump. That's why the instructions focus on making the build itself simple, including on the
+  Steam Deck with no other computer.
+
+**Where it's heading: mobile devices.** The current interest is taking the project further onto portable and
+mobile devices. Handheld PCs (Steam Deck and similar x86-64 devices on Linux or Windows) are the path that exists
+today. **There is no Android version:** it hasn't been started, and I don't have a device able to run it for
+testing. If you have the hardware and want to help (testing or porting), open an issue.
+
 ### Found a problem?
 
 Open an issue at <https://github.com/Azzulin/FEW-Recomp/issues> with your hardware, what happened and the
@@ -72,6 +101,18 @@ Para jogar: baixe o código da última release (ou clone), crie `Game Files` com
 `bash build-linux.sh` (Steam Deck e Linux: o jogo fica em `FireEmblemWarriors/` e ganha atalho na Steam) ou
 `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` (Windows: `Jogar no PC\few.exe`). Passo a passo,
 inclusive para o Steam Deck, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
+
+**Foco do projeto:** desempenho estável sem forçar o Steam Deck e sem cortar efeitos do jogo. No Deck: o ritmo
+nativo (batalhas a 30 fps) a 1280×720, com as partículas da GPU. Para isso, o trabalho foi reduzir o que se faz por
+quadro, não exigir mais do hardware:
+- sobreposição de quadros (CPU e GPU trabalham ao mesmo tempo);
+- envio à GPU só das páginas de memória que mudaram;
+- código compilado para o Zen 2;
+- shaders em segundo plano e em cache.
+
+O runtime vem do HWDER (mesma engine) e cada jogador gera o jogo a partir do próprio dump. **Próximo interesse:
+dispositivos móveis.** Os portáteis x86-64 (Steam Deck e afins) já funcionam. **Não existe versão para Android:**
+não foi iniciada e não tenho aparelho capaz de rodá-la para testar; quem tiver e quiser ajudar, abra uma issue.
 
 Documentação técnica (pt-BR):
 
