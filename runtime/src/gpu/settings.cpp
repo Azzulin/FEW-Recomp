@@ -137,13 +137,15 @@ void load() {
                 i = j + 1;
             }
         }
-        else if (k == "nsp_path" || k == "keys_path" || k == "save_dir" || k == "save_copy_from" || k == "update_path") {
+        else if (k == "nsp_path" || k == "keys_path" || k == "save_dir" || k == "save_copy_from" || k == "update_path" ||
+                 k == "aoc_dir") {
             std::string path = v;  // UTF-8, as written by save()
             while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
             (k == "nsp_path"    ? g_launch.nsp_path
              : k == "keys_path" ? g_launch.keys_path
              : k == "save_dir"  ? g_launch.save_dir
              : k == "update_path" ? g_launch.update_path
+             : k == "aoc_dir" ? g_launch.aoc_dir
                                 : g_launch.save_copy_from) = path;
         }
         else if (k == "mods_dir" || k == "mods_off") {
@@ -207,6 +209,7 @@ void save() {
     fprintf(f, "save_dir=%s\n", g_launch.save_dir.c_str());
     fprintf(f, "game_memory_mb=%d\n", g_launch.game_memory_mb);
     if (!g_launch.update_path.empty()) fprintf(f, "update_path=%s\n", g_launch.update_path.c_str());
+    if (!g_launch.aoc_dir.empty()) fprintf(f, "aoc_dir=%s\n", g_launch.aoc_dir.c_str());
     if (!g_launch.save_copy_from.empty()) fprintf(f, "save_copy_from=%s\n", g_launch.save_copy_from.c_str());
     if (!g_launch.mods_dir.empty()) fprintf(f, "mods_dir=%s\n", g_launch.mods_dir.c_str());
     if (!g_launch.mods_off.empty()) {

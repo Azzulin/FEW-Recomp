@@ -763,6 +763,19 @@ static int runtime_main(int argc, char** argv) {
         hwfs::run_pending_save_copy();  // a save folder change made in the menu last session
         hwfs::nsp::set_paths(settings::launch().nsp_path, settings::launch().keys_path);
         hwfs::nsp::set_update(settings::launch().update_path);
+        // DLC folder chosen in Setup (aoc_dir, UTF-8), handed to the NSP layer as HWDER_AOC_DIR (which it reads
+        // wide, so any path works). A variable already set wins.
+        if (const std::string& aoc = settings::launch().aoc_dir; !aoc.empty()) {
+#ifdef _WIN32
+            if (!_wgetenv(L"HWDER_AOC_DIR")) {
+                std::wstring w(MultiByteToWideChar(CP_UTF8, 0, aoc.c_str(), -1, nullptr, 0), L'\0');
+                MultiByteToWideChar(CP_UTF8, 0, aoc.c_str(), -1, w.data(), int(w.size()));
+                _wputenv_s(L"HWDER_AOC_DIR", w.c_str());
+            }
+#else
+            setenv("HWDER_AOC_DIR", aoc.c_str(), 0);
+#endif
+        }
         std::string err;
         bool nsp = hwfs::nsp::init(dir, err);
         std::error_code path_error;

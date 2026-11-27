@@ -69,6 +69,7 @@ struct Launch {
     std::string nsp_path;   // game file; empty = search beside the exe (HWDER_NSP wins)
     std::string keys_path;  // prod.keys; empty = search the usual places (HWDER_KEYS wins)
     std::string update_path;  // the game update unpacked by Setup; empty = base game only (HWDER_UPDATE wins)
+    std::string aoc_dir;      // folder with the DLC NSPs; empty = the base game's folder (HWDER_AOC_DIR wins)
     bool skip_prelaunch = false;
     std::string save_dir;        // save folder; empty = <exe dir>\save (see fs/save_dir.h)
     std::string save_copy_from;  // copy saves from this folder into save_dir at the next launch (set in the in-game menu)

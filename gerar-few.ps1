@@ -29,7 +29,8 @@ param(
     [int]$Jobs = [Math]::Min(8, [Environment]::ProcessorCount),
     [switch]$SoBuild,
     [switch]$Launch,
-    [switch]$NoUi                                                    # sem a janela de progresso
+    [switch]$NoUi,                                                   # sem a janela de progresso
+    [string]$DlcDir                                                  # pasta das DLCs (padrao: a da base)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,12 +43,16 @@ $env:PYTHONIOENCODING = 'utf-8'
 # build\build-events.jsonl (formato em tools\build_events.py; os ids dos passos sao os de la). Compilada em segundo
 # plano enquanto o update e desempacotado e o C gerado; aberta antes de compilar. Fechar a janela nao para nada.
 $events = $null
-$env:FEW_EVENTS = $null
-if (-not $NoUi -and -not $env:RECOMPLAUNCHER -and [Environment]::UserInteractive) {
+if ($NoUi -and $env:FEW_EVENTS) {
+    # Chamado pelo FEW Recomp Setup (tools\build_ui): ele criou o arquivo e mostra o progresso; nada de outra janela.
+    $events = $env:FEW_EVENTS
+} elseif (-not $NoUi -and -not $env:RECOMPLAUNCHER -and [Environment]::UserInteractive) {
     $events = Join-Path $root 'build\build-events.jsonl'
     New-Item -ItemType Directory -Force -Path (Split-Path $events) | Out-Null
     [IO.File]::WriteAllText($events, '')
     $env:FEW_EVENTS = $events
+} else {
+    $env:FEW_EVENTS = $null
 }
 function Send-BuildEvent([hashtable]$e) {
     if (-not $script:events) { return }
@@ -172,7 +177,7 @@ Write-Host "toolchain: $managed"
 
 # A janela compila em segundo plano (build\ui, ~1 min na primeira vez; depois so o que mudou) e o proprio
 # tools\build.py a abre quando fica pronta: o build do jogo nao espera por ela.
-if ($events) {
+if ($events -and -not $NoUi) {
     $uiDir = Join-Path $root 'build\ui'
     New-Item -ItemType Directory -Force -Path $uiDir | Out-Null
     $q = { param($s) '"' + $s + '"' }  # Start-Process junta os argumentos sem aspas
@@ -242,10 +247,20 @@ if (Get-Process -Name few -ErrorAction SilentlyContinue | Where-Object { $_.Path
 $tmp = Join-Path $out ('.few-' + [guid]::NewGuid().ToString('N') + '.tmp')
 Copy-Item -LiteralPath $exe -Destination $tmp
 Move-Item -LiteralPath $tmp -Destination $dst -Force
+# Catalogo de pipelines (tools\pipeline_catalog): o jogo prepara os graficos antes do primeiro quadro em vez de
+# compilar no meio da batalha. So metadados; o codigo vem do jogo do jogador.
+$catalog = Join-Path $root 'tools\pipeline_catalog\few-us-1.5.0.bin'
+if (Test-Path -LiteralPath $catalog) { Copy-Item -LiteralPath $catalog -Destination (Join-Path $out 'pipeline_catalog.bin') -Force }
 
 $ini = Join-Path $out 'hwder_settings.ini'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-$values = [ordered]@{ nsp_path = $base[0].FullName; keys_path = (Resolve-Path -LiteralPath $Keys).ProviderPath; update_path = (Join-Path $data 'update') }
+$aoc = ''
+if ($DlcDir) {
+    if (-not (Test-Path -LiteralPath $DlcDir -PathType Container)) { Fail "Pasta de DLCs nao encontrada: '$DlcDir'." }
+    $aoc = (Resolve-Path -LiteralPath $DlcDir).ProviderPath
+}
+# aoc_dir vazio: o jogo procura as DLCs na pasta da base.
+$values = [ordered]@{ nsp_path = $base[0].FullName; keys_path = (Resolve-Path -LiteralPath $Keys).ProviderPath; update_path = (Join-Path $data 'update'); aoc_dir = $aoc }
 $lines = if (Test-Path -LiteralPath $ini) { @([IO.File]::ReadAllText($ini, $utf8) -split "\r?\n" | Where-Object { $_ -ne '' }) } else { @('version=2', 'face_labels=1') }
 $seen = @{}
 $o = foreach ($l in $lines) { $k = ($l -split '=', 2)[0]; if ($values.Contains($k)) { if (-not $seen[$k]) { $seen[$k] = 1; "$k=$($values[$k])" } } else { $l } }
