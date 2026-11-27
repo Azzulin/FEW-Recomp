@@ -205,6 +205,11 @@ if(NOT WIN32)
     set_source_files_properties(runtime/src/host/memcmp_x86.cpp PROPERTIES COMPILE_OPTIONS -fno-builtin)
 endif()
 add_executable(hwder ${RUNTIME_SOURCES} $<TARGET_OBJECTS:hwder_cpu_check>)
+# Release of the user's dump, written by tools/recomp/gen_main.py into generated/sources.cmake: title IDs and
+# language in hwder/game_profile.h. Only the runtime gets it, so the generated game code is not rebuilt.
+if(HW_GAME_REGION STREQUAL "JP")
+    target_compile_definitions(hwder PRIVATE HW_GAME_REGION_JP=1)
+endif()
 if(HWDER_PUBLIC_RUNTIME_LINK_ONLY)
     # Cannot satisfy first_run's hwder.exe lookup or its ready certificate.
     set_target_properties(hwder PROPERTIES OUTPUT_NAME "HWDER-public-link-NOT-A-GAME")

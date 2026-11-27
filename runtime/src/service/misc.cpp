@@ -135,7 +135,7 @@ constexpr int kLanguageCount = 15;
 class Set : public SimpleService {
 public:
     Set() : SimpleService("set") {
-        reg(0, [](Request&, Response& rs) { rs.push(lang_code("en-US")); });  // GetLanguageCode
+        reg(0, [](Request&, Response& rs) { rs.push(lang_code(HW_GAME_LANGUAGE)); });  // GetLanguageCode
         auto langs = [](Request& rq, Response& rs) {
             u64 codes[kLanguageCount];
             for (int i = 0; i < kLanguageCount; i++) codes[i] = lang_code(kLanguages[i]);

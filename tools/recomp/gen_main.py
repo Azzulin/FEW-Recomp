@@ -44,6 +44,19 @@ def libc_intrinsics(mod):
             if s.defined and s.type == 2 and s.value and s.name in LIBC_INTRINSICS}
 
 
+def update_region(exefs):
+    """The release ("US", "JP") of the update this ExeFS came from: tools/game_update.py writes update.json next to
+    exefs/. US when it is missing or older (the only release before GitHub issue #1)."""
+    import json
+    from game_profile import region_of
+    try:
+        with open(os.path.join(exefs, "..", "update.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
+        return "US"
+    return meta.get("region") or region_of(int(meta.get("title_id", "0"), 16)) or "US"
+
+
 def read_symbols(path):
     """tools/recomp/symbols.txt: `<addr> <Name> [func|data] [hook]  # note` per line -> list of
     (addr, name, is_func, is_hook). Names must be C identifiers and unique; so must addresses."""
@@ -182,8 +195,12 @@ def main():
             with open(path, "w") as f:
                 f.write(text)
 
+    region = update_region(a.exefs)
+    log(f"release: {region}")
     with open(os.path.join(a.out, "sources.cmake"), "w") as f:
         f.write("set(RECOMP_SOURCES\n" + "".join(f"  ${{GEN_DIR}}/{x}\n" for x in files) + ")\n")
+        # The release of the dump the code came from; CMake passes it to the runtime (hwder/game_profile.h).
+        f.write(f'set(HW_GAME_REGION "{region}")\n')
     with open(os.path.join(a.out, "funcs.h"), "w") as f:
         f.write('#pragma once\n#include "hwder/cpu.h"\n#include "hwder/dispatch.h"\n')
         for st in all_starts:

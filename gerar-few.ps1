@@ -36,10 +36,18 @@ function Fail($m) { Write-Host "ERRO: $m" -ForegroundColor Red; exit 1 }
 # --- entradas ---------------------------------------------------------------------------------------------
 Step 'Entradas'
 $all = @(Get-ChildItem -LiteralPath $Jogo -Filter *.nsp -ErrorAction SilentlyContinue)
-$base = @($all | Where-Object { $_.Name -match '\[0100F15003E64000\]' })
-$upd = @($all | Where-Object { $_.Name -match '\[0100F15003E64800\]' })
-if ($base.Count -ne 1) { Fail "Esperava 1 NSP da base [0100F15003E64000] em $Jogo (achei $($base.Count))." }
-if ($upd.Count -ne 1) { Fail "Esperava 1 NSP do update [0100F15003E64800] em $Jogo (achei $($upd.Count))." }
+# Versao: a dos EUA ou a japonesa (vendida tambem na Asia; issue #1), pela base presente (tools\game_profile.py REGIONS).
+$regioes = [ordered]@{ US = '0100F15003E64000'; JP = '0100EAE003A5A000' }
+$achadas = @($regioes.Keys | Where-Object { $id = $regioes[$_]; $all | Where-Object { $_.Name -match "\[$id\]" } })
+if ($achadas.Count -gt 1) { Fail "Ha NSPs da base de mais de uma versao ($($achadas -join ', ')) em $Jogo; deixe uma." }
+$regiao = if ($achadas.Count) { $achadas[0] } else { 'US' }
+$baseId = $regioes[$regiao]
+$updId = $baseId.Substring(0, 13) + '800'
+$base = @($all | Where-Object { $_.Name -match "\[$baseId\]" })
+$upd = @($all | Where-Object { $_.Name -match "\[$updId\]" })
+if ($base.Count -ne 1) { Fail "Esperava 1 NSP da base [0100F15003E64000] (EUA) ou [0100EAE003A5A000] (Japao) em $Jogo (achei $($base.Count))." }
+if ($upd.Count -ne 1) { Fail "Esperava 1 NSP do update [$updId] em $Jogo (achei $($upd.Count))." }
+if ($regiao -ne 'US') { Write-Host "versao: $regiao (ainda nao testada; conte como roda)" -ForegroundColor Yellow }
 if (-not $Keys) {
     $Keys = @((Join-Path $Jogo 'prod.keys'), (Join-Path $root 'prod.keys')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }

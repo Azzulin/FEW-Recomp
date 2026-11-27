@@ -76,8 +76,9 @@ function Link([string]$link, [string]$target) {
 }
 $games = Join-Path $root 'Game Files'
 # Identifica pelo título entre colchetes (como o gerar-few.ps1), não pelas etiquetas [Base]/[UPD] do nome.
-$nsps = @(Get-ChildItem -LiteralPath $games -Filter *.nsp | Where-Object { $_.Name -notmatch '\[0100F15003E64800\]' })
-if (-not ($nsps | Where-Object Name -match '\[0100F15003E64000\]')) { Fail "NSP base [0100F15003E64000] não encontrado em $games" }
+# Versão dos EUA ou japonesa (issue #1); o update vai desempacotado em update\, então só a base e as DLCs entram.
+$nsps = @(Get-ChildItem -LiteralPath $games -Filter *.nsp | Where-Object { $_.Name -notmatch '\[(0100F15003E64800|0100EAE003A5A800)\]' })
+if (-not ($nsps | Where-Object Name -match '\[(0100F15003E64000|0100EAE003A5A000)\]')) { Fail "NSP base [0100F15003E64000] ou [0100EAE003A5A000] não encontrado em $games" }
 Get-ChildItem -LiteralPath $out -Filter *.nsp | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 foreach ($n in $nsps) { Link (Join-Path $out $n.Name) $n.FullName }
 foreach ($k in 'prod.keys', 'title.keys') {

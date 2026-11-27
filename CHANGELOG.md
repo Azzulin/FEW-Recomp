@@ -14,6 +14,9 @@
 - When the update cannot be unpacked, the build says why (not the US update 1.5.0, a key missing from `prod.keys`,
   a damaged NSP) instead of a Python error, and it refuses an update other than 1.5.0 up front.
 - The Linux build saves everything it prints in `build-linux.log`, to attach to a problem report.
+- **The Japanese release is accepted** (#1; also the one sold in Asia): base `0100EAE003A5A000`, update 1.5.0
+  `0100EAE003A5A800` and its DLCs. The build detects the release from the files and the game runs in Japanese. Not
+  tested yet: the build says whether the update's code is identical to the tested US one.
 
 ## FEW Recomp v0.2.0 (2026-11-24)
 

@@ -116,3 +116,10 @@ na própria opção do jogo os modos **Qualidade** (1080p, 30 fps na batalha) e 
 
 O primeiro dump era o japonês `0100EAE003A5A000` v0: mesmos 8 módulos da base US, SDK 1.6.0, RomFS só com pastas
 `jpn`. Foi trocado pelo US + update + DLC; nada derivado dele ficou no disco.
+
+**Versão japonesa aceita desde 2026-11-26 (issue #1), sem teste.** IDs informados na issue: base `0100EAE003A5A000`,
+update `0100EAE003A5A800` v327680 (o mesmo 1.5.0), DLCs `0100EAE003A5B001`…`B005`. A região sai do ticket do
+update (`game_update.py`, `region` no `update.json`); o `gen_main.py` grava `HW_GAME_REGION` no
+`generated/sources.cmake` e o CMake define `HW_GAME_REGION_JP` só no executável (`game_profile.h`: IDs e idioma
+`ja`). Não se sabe se o ExeFS do update japonês é igual ao do US: o `game_update.py` compara os módulos com
+`supported_games.json` e imprime `update: code identical…` ou `…differs…`. Peça essa linha a quem testar.

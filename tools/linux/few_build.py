@@ -35,8 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 TOOLS = ROOT / "tools"
 sys.path.insert(0, str(TOOLS))
 import linux_setup  # noqa: E402  (HWDER's Linux setup: pinned toolchain download and checks)
+import game_profile  # noqa: E402  (title IDs of the releases the build accepts)
 
-BASE_ID, UPDATE_ID = "0100F15003E64000", "0100F15003E64800"
 DEPS_RELEASE = {  # HWDER v0.3.5 Linux release: only its linux-deps folder is used (static SDL3, FFmpeg, libcrypto)
     "url": "https://github.com/blocker-3/HWDER/releases/download/v0.3.5/HWDER-linux-x86_64-v0.3.5.tar.gz",
     "sha256": "ddd20149944559ff737e2e6ed6a430c899636974ee363d2b6803985c39b01934",
@@ -162,12 +162,21 @@ def find_inputs(game_dir, keys):
         raise BuildError(f'The game folder {game_dir} does not exist. Create "Game Files" next to build-linux.sh and '
                          "put your NSPs and prod.keys in it, or pass --game-dir.")
     nsps = sorted(p for p in game_dir.iterdir() if p.suffix.lower() == ".nsp" and p.is_file())
-    base = [p for p in nsps if f"[{BASE_ID}]" in p.name.upper()]
-    update = [p for p in nsps if f"[{UPDATE_ID}]" in p.name.upper()]
+    # The release (US, or JP: Japan / Asia) is the one whose base game is there (tools/game_profile.py REGIONS).
+    found = {r: [p for p in nsps if f"[{pid:016X}]" in p.name.upper()] for r, pid in game_profile.REGIONS.items()}
+    regions = [r for r, files in found.items() if files]
+    if len(regions) > 1:
+        raise BuildError(f"{game_dir} has base game NSPs of more than one release ({', '.join(regions)}); keep one.")
+    region = regions[0] if regions else "US"
+    base_id = f"{game_profile.REGIONS[region]:016X}"
+    update_id = f"{game_profile.REGIONS[region] | 0x800:016X}"
+    base = found[region]
+    update = [p for p in nsps if f"[{update_id}]" in p.name.upper()]
     if len(base) != 1:
-        raise BuildError(f"Expected 1 base game NSP with [{BASE_ID}] in its name in {game_dir}, found {len(base)}.")
+        ids = " or ".join(f"[{pid:016X}] ({r})" for r, pid in game_profile.REGIONS.items())
+        raise BuildError(f"Expected 1 base game NSP with {ids} in its name in {game_dir}, found {len(base)}.")
     if len(update) != 1:
-        raise BuildError(f"Expected 1 update 1.5.0 NSP with [{UPDATE_ID}] in its name in {game_dir}, "
+        raise BuildError(f"Expected 1 update 1.5.0 NSP with [{update_id}] in its name in {game_dir}, "
                          f"found {len(update)}. The update is required.")
     if keys:
         keys = Path(keys).expanduser().resolve()
@@ -176,6 +185,7 @@ def find_inputs(game_dir, keys):
     if not keys or not keys.is_file():
         raise BuildError(f'prod.keys not found (looked in {game_dir} and {ROOT}). Put it there or pass --keys.')
     dlcs = [p for p in nsps if p not in base and p not in update]
+    info(f"release: {region}" + ("" if region == "US" else " (not yet tested; please report how it runs)"))
     info(f"base   : {base[0].name}")
     info(f"update : {update[0].name}")
     info(f"DLCs   : {len(dlcs)}")

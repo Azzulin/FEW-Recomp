@@ -1,5 +1,5 @@
-"""Unpack the game's update (tools/game_profile.py: 1.5.0, title 0100F15003E64800) from the user's own .nsp or .nsz
-into a private folder.
+"""Unpack the game's update (tools/game_profile.py: 1.5.0, title 0100F15003E64800 for the US release or
+0100EAE003A5A800 for the Japanese one) from the user's own .nsp or .nsz into a private folder.
 
     python tools/game_update.py <update.nsp|.nsz> <prod.keys> <out dir>
 
@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nx_extract as nx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from game_profile import PROGRAM_ID, UPDATE_ID, UPDATE_VERSION
+from game_profile import REGIONS, UPDATE_ID, UPDATE_VERSION
 
 
 def _tickets(files, read):
@@ -75,18 +75,22 @@ def unpack(path, keys_path, out_dir):
     read = lambda o, s: (f.seek(o), f.read(s))[1]
     files = nx.parse_pfs0(read, 0)
     tk = _tickets(files, read)
-    if not any(r[:8] == UPDATE_ID.to_bytes(8, "big") for r in tk):
+    # The release comes from the ticket's rights ID (title ID in its first 8 bytes): US or JP (game_profile.REGIONS).
+    region = next((r for r, pid in REGIONS.items() if any(k[:8] == (pid | 0x800).to_bytes(8, "big") for k in tk)), None)
+    if region is None:
         raise ValueError(f"Not the game's update: no ticket for title {UPDATE_ID:016X}")
+    program_id = REGIONS[region]
+    update_id = program_id | 0x800
     program = None
     for name, off, size in files:
         if name.endswith(".cnmt.nca") or not (name.endswith(".nca") or name.endswith(".ncz")):
             continue
         hdr = nx.xts_dec_sectors(keys["header_key"], read(off, 0xC00), 0)
-        if hdr[0x205] == 0 and struct.unpack_from("<Q", hdr, 0x210)[0] == PROGRAM_ID:
+        if hdr[0x205] == 0 and struct.unpack_from("<Q", hdr, 0x210)[0] == program_id:
             program = (name, off, size, hdr)
     if not program:
         raise ValueError("The update has no program content")
-    version = _version(f, files, keys, tk)
+    version = _version(f, files, keys, tk, update_id)
     if version != UPDATE_VERSION:
         raise ValueError(f"This is update v{version}; the generated code is built from update 1.5.0 "
                          f"(v{UPDATE_VERSION}). Use that update.")
@@ -135,7 +139,7 @@ def unpack(path, keys_path, out_dir):
     for n, data in exefs.items():
         (out_dir / "exefs" / n).write_bytes(data)
     (out_dir / "romfs.patch").write_bytes(patch)
-    meta = {"schema": 1, "title_id": f"{UPDATE_ID:016x}", "version": version,
+    meta = {"schema": 1, "title_id": f"{update_id:016x}", "region": region, "version": version,
             "indirect_offset": ind_off, "indirect_size": ind_size, "indirect_count": ind_count,
             "romfs_offset": lvl_off, "romfs_size": lvl_size, "patch_size": len(patch)}
     (out_dir / "update.json").write_text(json.dumps(meta, indent=1))
@@ -168,7 +172,7 @@ def _decrypt_section(read, nca_off, start, end, fsh, ctr_key):
     return bytes(out)
 
 
-def _version(f, files, keys, tk):
+def _version(f, files, keys, tk, update_id):
     """Title version from the update's content meta (PackagedContentMeta: title id at 0, version at 8)."""
     for name, off, size in files:
         if name.endswith(".cnmt.nca"):
@@ -178,7 +182,7 @@ def _version(f, files, keys, tk):
             for fn, foff, fsz in nx.parse_pfs0(lambda o, s: sec.read(doff + o, s), 0):
                 if fn.endswith(".cnmt"):
                     tid, version = struct.unpack_from("<QI", sec.read(doff + foff, 12), 0)
-                    if tid == UPDATE_ID:
+                    if tid == update_id:
                         return version
     raise ValueError("The update's content meta is missing")
 
@@ -198,8 +202,9 @@ def explain(error):
         return "Not enough free memory to unpack the update; close other programs and run the build again."
     text = str(error)
     if text.startswith("Not the game's update"):
-        return (f"{text}. This file is not the update 1.5.0 of Fire Emblem Warriors for the US release "
-                f"({UPDATE_ID:016X}); other regions are not supported.")
+        ids = " or ".join(f"{pid | 0x800:016X} ({r})" for r, pid in REGIONS.items())
+        return (f"This file is not the update 1.5.0 of Fire Emblem Warriors: expected the update {ids}; other "
+                "releases are not supported.")
     if "PFS0" in text or "NCA3" in text:
         return f"This file is not a readable NSP ({text}). It may be damaged or incomplete; copy it again."
     return f"{type(error).__name__}: {text}" if text else type(error).__name__
@@ -212,8 +217,25 @@ def main(argv):
     except Exception as e:  # noqa: BLE001 - every failure becomes one readable line
         print(f"update: {explain(e)}", file=sys.stderr, flush=True)
         return 1
-    print(f"update: v{meta['version']} unpacked", flush=True)
+    print(f"update: {meta['region']} release, v{meta['version']} unpacked", flush=True)
+    print(f"update: {code_check(Path(argv[2]) / 'exefs')}", flush=True)
     return 0
+
+
+def code_check(exefs):
+    """Whether the unpacked ExeFS is byte for byte the tested one (tools/supported_games.json). Another release can
+    carry the same code (then nothing changes but the IDs and the language); if not, it is built but untested."""
+    import hashlib
+    manifest = Path(__file__).resolve().parent / "supported_games.json"
+    known = json.loads(manifest.read_text(encoding="utf-8"))["profiles"][0]["modules_sha256"]
+    got = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path(exefs).iterdir())
+           if p.name in known}
+    same = [n for n in known if got.get(n) == known[n]]
+    if len(same) == len(known):
+        return "code identical to the tested US update 1.5.0"
+    differs = ", ".join(n for n in known if n not in same)
+    return (f"code differs from the tested US update 1.5.0 in {differs}: it is built anyway, but untested. Please "
+            "report how it runs (GitHub issue #1).")
 
 
 if __name__ == "__main__":

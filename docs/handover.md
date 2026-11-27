@@ -68,6 +68,25 @@ Build no Linux:
   (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
   administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
 
+## Issue #1: versão japonesa (2026-11-26, sem teste: não há dump japonês)
+
+- `tools/game_profile.py REGIONS` (`US`, `JP` = `0100EAE003A5A000`) e `region_of`. Os scripts acham a região pela
+  base presente em `Game Files` (`few_build.find_inputs`, `gerar-few.ps1`, `gerar-deck.ps1`) e recusam bases de duas
+  regiões juntas.
+- `game_update.unpack` escolhe a região pelo ticket do update e grava `region` no `update.json`; `main` imprime
+  `update: code identical to the tested US update 1.5.0` ou `… differs … in <módulos>` (hash dos arquivos do ExeFS
+  contra `supported_games.json`).
+- `gen_main.update_region` lê `../update.json` ao lado do ExeFS e escreve `set(HW_GAME_REGION "JP")` no
+  `generated/sources.cmake`. O `CMakeLists.txt` aplica `HW_GAME_REGION_JP` só ao alvo `hwder`, então trocar de
+  região não recompila o código gerado. Chega também ao build do Deck pelo WSL, que copia `generated/`.
+- `game_profile.h`: título, `HW_GAME_REGION` e idioma `ja` com `HW_GAME_REGION_JP`. O `set` `GetLanguageCode`
+  agora responde `HW_GAME_LANGUAGE` (antes, `en-US` fixo; nos EUA não muda nada).
+- A `extra_entries.txt` rastreada (uma entrada no `glslc`, biblioteca do SDK) vale para as duas regiões.
+- Testado: detecção de região (Python e PowerShell), `update_region`, `region_of`, `misc.cpp` e `game_profile.h`
+  compilados nas duas regiões. **Não testado:** dump japonês real, jogo rodando em japonês, vídeos `nx/movie/jpn`.
+- Se o código japonês for diferente, `few_build.merge_found_entries`/`gerar-few.ps1` juntariam endereços descobertos
+  nele à lista dos EUA; resolver só se isso acontecer.
+
 ## Issue #3: build no Steam Deck (2026-11-26, falta testar num Deck)
 
 Relato: o download "não acaba" e no fim aparece algo como "fail updated"; pede um jeito de instalar sem Konsole.

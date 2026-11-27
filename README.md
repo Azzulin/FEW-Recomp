@@ -20,7 +20,8 @@ audio, video, file system). No emulator, no JIT.
 1. Download the source from the latest [release](https://github.com/Azzulin/FEW-Recomp/releases) (or
    `git clone` this repository) and extract it.
 2. Create a `Game Files` folder inside it with your NSPs — base `[0100F15003E64000]`, update 1.5.0
-   `[0100F15003E64800]`, DLCs — and your `prod.keys`.
+   `[0100F15003E64800]`, DLCs — and your `prod.keys`. The Japanese release (`[0100EAE003A5A000]`, update
+   `[0100EAE003A5A800]`) is also accepted, untested so far.
 3. Build with one command:
 
    | On | Run (in a terminal in the source folder) | The game ends up in |
@@ -46,7 +47,8 @@ troubleshooting.
 - **Steam Deck:** battles at 30 fps (the game's native pace) at 1280×720 with GPU particles; the densest fights can
   still dip below 30. 60 fps is an option in the F1 menu.
 - **Known limits:** resolution scaling stays at 1×; HWDER's extras tied to *Hyrule Warriors* addresses (120 fps,
-  ultrawide, LOD) are off; only the US release with update 1.5.0 is supported; shader stutter the first time each
+  ultrawide, LOD) are off; update 1.5.0 is required; the US release is the tested one, and the Japanese release (also
+  sold in Asia) is accepted but not tested yet; shader stutter the first time each
   scene is seen. Progress notes (Portuguese): [docs/handover.md](docs/handover.md).
 
 ### Project focus
@@ -95,7 +97,8 @@ module set and almost the same SDK (3.7.0 vs 3.5.1). Third-party sources are fet
 
 Recompilação estática de *Fire Emblem Warriors* (Switch, update 1.5.0) para um programa nativo x86-64 com Vulkan,
 para **Windows**, **Linux** e **Steam Deck**. **Nenhum arquivo do jogo está incluído**: é preciso a sua própria cópia
-(base, update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console.
+(base, update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console. A versão testada é a dos EUA;
+a japonesa (vendida também na Ásia) é aceita, ainda sem teste.
 
 Para jogar: baixe o código da última release (ou clone), crie `Game Files` com os NSPs e o `prod.keys` e rode
 `bash build-linux.sh` (Steam Deck e Linux: o jogo fica em `FireEmblemWarriors/` e ganha atalho na Steam) ou

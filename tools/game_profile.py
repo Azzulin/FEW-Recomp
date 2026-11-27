@@ -5,6 +5,19 @@ Fire Emblem Warriors, US: base game v0 + update 1.5.0 (v327680) + add-on content
 PROGRAM_ID = 0x0100F15003E64000          # base game (program NCA title ID, also inside the update's program NCA)
 UPDATE_ID = PROGRAM_ID | 0x800           # 0x0100F15003E64800
 AOC_BASE_ID = PROGRAM_ID + 0x1000        # add-on content is AOC_BASE_ID + index (1..5 for this game)
+
+# Releases the build accepts, by program ID (update = | 0x800, add-on content = + 0x1000 + index). The runtime's
+# copy is the HW_GAME_REGION_JP switch in game_profile.h. US is the tested one; JP (Japan, also sold in Asia;
+# GitHub issue #1) has the same update 1.5.0 (v327680) and is not yet tested.
+REGIONS = {"US": PROGRAM_ID, "JP": 0x0100EAE003A5A000}
+
+
+def region_of(title_id):
+    """The release ("US", "JP") a base, update or add-on title ID belongs to, or None."""
+    for region, program in REGIONS.items():
+        if title_id in (program, program | 0x800) or (title_id & ~0xFFF) == program + 0x1000:
+            return region
+    return None
 UPDATE_VERSION = 327680                  # 1.5.0: the ExeFS the generated code is built from
 NAME = "Fire Emblem Warriors"
 # Key art on Nintendo's store image service (assets.nintendo.com/image/upload/<crop>/<this>): US store page

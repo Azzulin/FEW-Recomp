@@ -23,18 +23,21 @@ Then: [6. Settings, saves and logs](#6-settings-saves-and-logs) · [7. Updating]
 
 ## 1. What you need
 
-**Your game files (US release, from your own console):**
+**Your game files (US or Japanese release, from your own console):**
 
-| File | Title ID (in the file name) | Version |
-|---|---|---|
-| Base game | `[0100F15003E64000]` | v0 |
-| Update | `[0100F15003E64800]` | **1.5.0** (v327680) — required |
-| DLCs (optional) | `[0100F15003E65001]` … `[0100F15003E65005]` | any |
-| `prod.keys` | — | from the same console |
+| File | US title ID (in the file name) | Japanese title ID | Version |
+|---|---|---|---|
+| Base game | `[0100F15003E64000]` | `[0100EAE003A5A000]` | v0 |
+| Update | `[0100F15003E64800]` | `[0100EAE003A5A800]` | **1.5.0** (v327680) — required |
+| DLCs (optional) | `[0100F15003E65001]` … `[0100F15003E65005]` | `[0100EAE003A5B001]` … `[0100EAE003A5B005]` | any |
+| `prod.keys` | — | — | from the same console |
 
 The scripts recognise the base game and the update by the **title ID in square brackets** in the file name, so keep
-those tags (for example `Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp`). Other regions and other update
-versions are not supported yet. `.nsz`/`.xci` files are not accepted: use `.nsp`.
+those tags (for example `Fire Emblem Warriors [0100F15003E64000][v0][Base][US].nsp`), and use the base, update and
+DLCs of one release only. The **US release is the tested one**. The **Japanese release** (also the one sold in
+Asia) is accepted but **not tested yet**: the game runs in Japanese, and the build says whether your update's code is
+identical to the tested US one. Please report how it runs. Other releases and other update versions are not
+supported. `.nsz`/`.xci` files are not accepted: use `.nsp`.
 
 **Windows PC:** Windows 10/11 x64, [Git](https://git-scm.com/download/win), [Python 3](https://www.python.org/downloads/windows/)
 (tick *Add python.exe to PATH* in the installer), about 5 GB free plus your NSPs (~19 GB with all DLCs), and a GPU
