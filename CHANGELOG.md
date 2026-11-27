@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **The build is about three times faster.** The game's code is now translated with its vector operations already
+  spelled out, lane by lane, instead of as thousands of tiny loops the compiler had to unroll itself: in the game's
+  biggest functions that was almost all of the compile time. The compiler still produces practically the same
+  machine code (measured on the largest file: 0.4% smaller, the same number of vector instructions). The game
+  code is also compiled without debug information, which only developers used. Measured on a 12-thread laptop
+  (8 at a time): 44 min of compiling down to 15 min; the game file went from 652 MB to 202 MB. On Linux and the
+  Steam Deck, whose compiler was hit harder, the biggest files take a third of the time they did.
+- **Build window:** before compiling, a window opens next to the terminal with the steps, a progress bar, the files
+  done and about how long is left, and a **Play** button at the end. It works with a mouse, a keyboard or a
+  controller, and closing it does not stop the build. `gerar-few.ps1 -NoUi` / `build-linux.sh --no-ui` build without
+  it; RecompLauncher's setup never opens it (the launcher shows its own progress).
+
 ## FEW Recomp v0.3.0 (2026-11-27)
 
 - **Fixed a crash after about 9 minutes of play at 60 fps (18 at 30 fps)**, reported as "crashed going to Camp

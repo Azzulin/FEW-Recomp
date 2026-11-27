@@ -21,9 +21,9 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 
 | Issue | Estado | Próximo passo |
 |---|---|---|
-| #2 crash no menu Camp (Windows) | Corrigido em `5ac2be3` (TLS e handles das threads que terminam; ver "Crash da issue #2") | Ninguém comentou ainda. Validar jogando mais de 10 min (20 no Deck) e ver as linhas `kernel: … kept` no `hwder.log`; depois responder à issue |
-| #3 build no Deck demorado / "fail updated" | `6e4941e`; pedido novo teste ao usuário | Esperar o `build-linux.log` dele, caso falhe de novo |
-| #1 versão japonesa | `0a04d44` aceita a região. O testador respondeu em 27/11: o `main` japonês é outro build e o build parava em `Display_SetMode … is not a recompiled function start`. Corrigido em `741381b` (símbolos por assinatura); novo teste pedido na issue em 27/11 | Esperar as linhas `symbols: … moved in this build`, se o jogo abre e se a batalha fica a 60 fps |
+| #2 crash no menu Camp (Windows) | Corrigido em `5ac2be3` (TLS e handles das threads que terminam; ver "Crash da issue #2"). Em 27/11 comentado que está na v0.3.0, com pedido de teste (mais de 10 min, abrir o Camp) | Esperar o retorno; se fechar de novo, pedir o `hwder.log` |
+| #3 build no Deck demorado / "fail updated" | `6e4941e`; em 27/11 avisado que está na v0.3.0 | Esperar o `build-linux.log` dele, caso falhe de novo |
+| #1 versão japonesa | **Funciona** (testador, 27/11): os 10 símbolos achados por assinatura (`same code, moved in this build`), jogo em japonês a 60 fps. Relatou engasgos na compilação de shaders na primeira vez ("igual ao emulador") e pediu DualSense. Respondido em 27/11: engasgos diminuem com o cache (`pipeline_*.bin`); DualSense já é suportado pelo SDL3 (giroscópio, vibração), pedido o `hwder.log` se não funcionar | Ver se o DualSense dele funciona; os engasgos de primeira vez são a pendência "Engasgos de compilação" |
 
 ### Pendências, por ordem
 
@@ -36,10 +36,14 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 2. **Próxima release**: abrir de novo uma seção "Unreleased" no `CHANGELOG.md` para o que vier; publicar como a
    v0.3.0 (tag, `package.py` num checkout limpo, os dois arquivos de `dist/` como release normal). Passo a passo em
    [docs/recomplauncher.md](recomplauncher.md). Cada release faz o launcher recompilar o jogo de quem já tem.
-3. **Catálogo do RecompLauncher**: conta de desenvolvedor (aprovação manual) e envio em
+3. **Catálogo do RecompLauncher**: conta de desenvolvedor pedida pelo dono em 2026-11-27, esperando a aprovação
+   manual. Depois, envio em
    `recomplauncher.com/submit?platform=pc`. Conferir se o launcher aceita só o tarball no Linux (o guia pede também
    um AppImage).
 4. **Responder à #2** depois da validação; na #1, acompanhar o teste do usuário japonês.
+5. **Build 3x mais rápido e janela de progresso** (seção abaixo): na `main` desde 2026-11-27, **sem release**. Falta
+   medir o build completo no Deck (tempo e se a janela abre no Modo Desktop), depois publicar numa release nova (o
+   launcher recompila o jogo de quem já tem, agora bem mais rápido).
 
 ### Armadilhas desta sessão
 
@@ -54,6 +58,58 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
   de 260 caracteres de caminho (medido). Detalhes em [docs/recomplauncher.md](recomplauncher.md).
 - Teste de ponta a ponta: rodar o `few-prepare.bat` direto, sem `cmd /c`, que remove as aspas de caminhos com espaço.
   O teste do Linux roda no WSL `archlinux`, em `/tmp`. Limpe `%TEMP%\fewt` e `/tmp/few-e2e` no fim.
+
+## Build 3x mais rápido e janela de progresso (2026-11-27, na main sem release)
+
+Pedido do dono: o build do Super Odyssey PC Recomp leva 20–30 min no Deck; o nosso, horas. Medido antes de mudar:
+
+- **98% do tempo é o código do jogo** (414 arquivos, 5,8 h de CPU no build do launcher; o runtime, 380 s). **88%**
+  está em 96 arquivos com uma função de ~20.900 linhas cada, quase-clones (diferem em endereços de retorno e alguns
+  imediatos: um template do jogo instanciado 96 vezes). Ex.: `rc_main_00b.c` = `f_10000b0b04`.
+- `-ftime-report` (Zig, `-O2`): **SROA 46% e LoopRotate 41%**. Causa: o gerador (`tools/recomp/a64_simd.py`) emitia
+  cada instrução NEON como `for (int i = 0; i < N; i++) …`; só aquela função tinha 5.356 laços, e o LLVM roda esses
+  passes por laço sobre a função inteira.
+- **Correção:** `unroll_lanes()` no `a64_simd.py`, aplicado em `translate()` e `ld_struct()`: os laços saem
+  desenrolados (cada lane no próprio bloco, `i` trocado pelo número). Conferido: o C novo é **byte a byte** o antigo
+  com essa transformação (416 arquivos) e o código de máquina do arquivo grande ficou igual (`.text` −0,4%, mesmo
+  número de instruções vetoriais). Um corpo que mexa em `i` ou saia do laço para o gerador com `RuntimeError`.
+- **Debug info fora do código do jogo** (`HW_GAME_DEBUG_INFO=OFF` no CMake; o Zig precisa de `-s`, porque põe
+  `-gdwarf-4` sozinho mesmo sem `-g`). Nomes `f_<endereço>` vêm da tabela de símbolos e o unwind das tabelas de
+  unwind; `symbolize_samples.py` segue funcionando (o runtime mantém `-g`).
+- Números do `rc_main_00b.c` (4 compilações em paralelo, notebook de 12 threads):
+
+  | Compilador | Antes | Depois |
+  |---|---|---|
+  | clang do Windows (llvm-mingw), `-O2 -g` | 186 s | 64 s |
+  | Zig (Linux/Deck), `-O2 -g` | 410 s | 168 s; **141 s** sem debug info |
+
+- **Build completo no Windows** (8 jobs, `gerar-few.ps1 -SoBuild` do zero): ninja de **44,5 → 15,4 min**, CPU do
+  código do jogo de 20.963 → 7.011 s, `few.exe` de 652 → 202 MB. No Deck ainda **não medido** (estimativa pela
+  proporção: ~1/3 do tempo de antes).
+- Ganhos não adotados: `-O1` nas funções gigantes (no arquivo original, mais −20%; precisa provar que não custa fps:
+  o amostrador só pega a MainThread quando detecta batalha, o que não aconteceu nesta build); clang ligado à glibc no
+  Linux (~1,5x mais rápido que o do Zig, cuja musl aloca devagar; +1 GB de download no Deck). Maior alavanca futura:
+  o gerador emitir **uma** função parametrizada no lugar dos 96 quase-clones.
+
+**Janela de progresso** (`tools/build_ui/`, SDL3 + Dear ImGui no renderer do SDL, visual próprio inspirado no jogo, sem
+arte dele): mostra passos, barra, arquivos, tempo restante e, no fim, **Play**. Só lê `build/build-events.jsonl`
+(formato em `tools/build_events.py`): `gerar-few.ps1` e `few_build.py` gravam os passos, `tools/build.py` o progresso
+do ninja (ponderado pelo tamanho de cada fonte; um *dry run* `ninja -n` lista o que falta). É compilada em segundo
+plano (`build.py --build-ui`, em `build/ui` ou `build/ui-linux`) enquanto o update é desempacotado e o C gerado, e
+aberta pelo próprio `build.py --build-ui --open-events … --watch-pid …` quando fica pronta (esse modo não pega a
+trava de build: o build do jogo nunca espera por ela), com `--pid` do build para notar um terminal fechado. Fechar a
+janela não para nada. `-NoUi`/`--no-ui` desligam; os setups do RecompLauncher passam essas opções.
+
+- Peso de cada arquivo no progresso: `tamanho + (maior função)² / 1 MB` (r = 0,92 com os tempos medidos; só o
+  tamanho, 0,87). O tempo restante ainda erra para menos quando só sobram gigantes rodando em paralelo.
+- Testado no Windows: três estados por capturas (`FEW_BUILD_UI_SCREENSHOT=<bmp>` salva e fecha), e de ponta a ponta
+  com `gerar-few.ps1 -SoBuild` (40 arquivos recompilados): eventos completos, a janela compilou em ~95 s (SDL do
+  zero, 4 jobs) em paralelo e abriu sozinha na tela "pronto". Batalha longa (`battle_long`, 330 s, cache de shaders
+  quente) com o `few.exe` novo e o antigo: 59,5 contra 59,4 fps, thread do jogo 16,6 ms/quadro nos dois.
+- Testado no Linux (WSL archlinux, Zig e `linux-deps` do Deck, em `/tmp/few-ui`): a janela compila em 43 s (2 jobs) e
+  abriu pelo WSLg durante a tradução. **O build completo no WSL não terminou**: o Claude Code o parou por falta de
+  memória no Windows durante a tradução (10 jobs, VM com 10 GB). Não há ainda o tempo total no Linux; repetir com
+  `--jobs 4` ou medir direto no Deck.
 
 ## Release pública (2026-11-24)
 

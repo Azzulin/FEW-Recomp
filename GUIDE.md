@@ -42,7 +42,7 @@ supported. `.nsz`/`.xci` files are not accepted: use `.nsp`.
 
 **Windows PC:** Windows 10/11 x64, [Git](https://git-scm.com/download/win), [Python 3](https://www.python.org/downloads/windows/)
 (tick *Add python.exe to PATH* in the installer), about 5 GB free plus your NSPs (~19 GB with all DLCs), and a GPU
-with a Vulkan 1.2+ driver. First build: roughly 45–90 minutes.
+with a Vulkan 1.2+ driver. First build: roughly 20–45 minutes.
 
 **Linux PC or Steam Deck:** an x86-64 CPU with AVX2, a Vulkan GPU driver (Mesa RADV, NVIDIA, Intel), `python3`
 (already on SteamOS, Bazzite, Fedora, Ubuntu and Arch), about **8 GB free on a Linux drive** (internal storage, or an
@@ -97,12 +97,17 @@ LLVM-MinGW, CMake, Ninja; no admin, no Visual Studio, into `%LOCALAPPDATA%\HWDER
 the game's ARM64 code to C, compiles it and publishes **`Jogar no PC\few.exe`** ("Play on PC"). If it stops halfway,
 run it again: it resumes. Play with `Jogar no PC\few.exe` — make a shortcut or add it to Steam as a non-Steam game.
 
+Before compiling, a **build window** opens next to PowerShell: the steps, a progress bar, how many files are done and
+about how long is left, and a **Play** button at the end. It only shows the progress: closing it does not stop the
+build, and PowerShell keeps every detail. `-NoUi` builds without it.
+
 | Option | What it does |
 |---|---|
 | `-Jogo D:\Switch\FEW` | read the NSPs from another folder |
 | `-Keys D:\keys\prod.keys` | keys from another place |
 | `-Jobs 4` | fewer parallel compiles (less RAM) |
 | `-SoBuild` | only recompile (skip unpacking and translating) |
+| `-NoUi` | no build window, only PowerShell |
 
 ## 5A. Steam Deck, step by step
 
@@ -141,6 +146,9 @@ Bluetooth keyboard helps, or press **Steam + X** for the on-screen keyboard.
    update, translates and compiles the game. The first time this takes **a few hours** on the Deck: leave it plugged
    in with the terminal open (the script keeps the Deck from sleeping). If it gets interrupted, run it again: it
    continues where it stopped, downloads included. Everything it prints is also saved in `build-linux.log`.
+   Before compiling, a **build window** opens with the steps, a progress bar, about how long is left and, at the
+   end, a **Play** button; it works with the Deck's controls too. Closing it does not stop the build (the terminal
+   keeps every detail); `--no-ui` builds without it.
    If you have a Windows PC, building there for the Deck ([section 5C](#5c-steam-deck-built-on-a-windows-pc)) is faster.
 6. **Add to Steam:** at the end it asks *Close Steam now?* — type `y` and Enter. Steam closes, the game is added
    as **Fire Emblem Warriors** (with artwork), and Steam opens again.
@@ -174,6 +182,7 @@ Steam are both supported. Immutable systems (Bazzite, SteamOS) need nothing extr
 | `--deck` / `--no-deck` | force the Steam Deck build and settings on or off (detected automatically) |
 | `--march CPU` | compile for one CPU family, e.g. `znver3` (default: generic AVX2; `znver2` on a Deck) |
 | `--launch` | start the game when the build is done |
+| `--no-ui` | no build window (the progress window that opens before compiling), only the terminal |
 
 Files it creates (all ignored by git): `data/update` (the unpacked update), `generated/` (C code), `build/linux/`
 (compiler output and `build.log`), `FireEmblemWarriors/` (the game) and `~/.local/share/FEW-Recomp` (build tools,
