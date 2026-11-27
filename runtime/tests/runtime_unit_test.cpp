@@ -540,8 +540,26 @@ static void test_handle_table() {
     CHECK(t.get(ha) == nullptr);
     CHECK(!t.close(ha));
     CHECK(t.get(hb) == b);
-    CHECK_EQ(t.add(a), 0x18010u);  // the counter never reuses a value
+    CHECK_EQ(t.add(a), 0x18010u);  // the counter does not reuse a value before it wraps
     CHECK_EQ(a.use_count(), 2);     // held by the table once (the closed entry released its reference)
+}
+
+// The 17-bit index wraps after 131071 handles; closed values come back, open ones are skipped.
+static void test_handle_table_wrap() {
+    using namespace kern;
+    HandleTable t;
+    auto kept = std::make_shared<TestObject>();
+    auto temp = std::make_shared<TestObject>();
+    CHECK_EQ(t.add(kept), 0x8010u);  // index 1 stays open
+    Handle last = 0;
+    for (u32 i = 2; i < (1u << 17); i++) {
+        last = t.add(temp);
+        t.close(last);
+    }
+    CHECK_EQ(last, 0xFFFF8010u);       // index 0x1FFFF: the last value that fits in 32 bits
+    CHECK_EQ(t.add(temp), 0x10010u);   // wrapped: index 1 is still open, so index 2
+    CHECK(t.get(0x8010) == kept);      // the live handle was not replaced
+    CHECK_EQ(temp.use_count(), 2);
 }
 
 int main() {
@@ -550,6 +568,7 @@ int main() {
     test_texture_layout();
     test_hipc();
     test_handle_table();
+    test_handle_table_wrap();
     if (g_failures) {
         fprintf(stderr, "runtime_unit_test: %d of %d checks FAILED\n", g_failures, g_checks);
         return 1;

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed a crash after about 9 minutes of play at 60 fps (18 at 30 fps)**, reported as "crashed going to Camp
+  menu" (#2). The game starts a short-lived thread about every frame, and each one used up a slot of thread-local
+  memory that was never given back; the log ended in `mem: commit failed` / `fatal: commit`. Slots, CPU contexts
+  and host threads of finished threads are now released, and kernel handle numbers no longer collide after
+  131,072 handles.
+
 ## FEW Recomp v0.2.0 (2026-11-24)
 
 - **Build natively on Linux and on the Steam Deck itself** with one command, `bash build-linux.sh`: no Windows PC,

@@ -68,6 +68,31 @@ Build no Linux:
   (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
   administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
 
+## Crash da issue #2: região de TLS esgotada (2026-11-26, falta validar no jogo)
+
+Issue #2 ("Game crashed going to Camp menu", Windows, RTX 3080 Ti): o log termina em
+`mem: commit failed at 0x4801001000 (+0x1000): error 487` e `fatal: commit`. O menu Camp foi só o momento.
+
+- **Causa:** cada thread do guest pega um slot de TLS de 0x200 bytes e nenhum era devolvido. A região tem 16 MiB
+  (`kTlsSize`), ou seja, 32.768 threads; o endereço da falha é o fim da região mais uma página. O log tinha 32.727
+  quadros apresentados no crash, o que sugere **uma thread nova por quadro** (crash em ~9 min a 60 fps, ~18 min a
+  30 fps). Só o `svcCreateThread` cria threads além da principal. Dedução pela contagem; não foi medido no jogo.
+- **Correção:** `kernel.cpp reap_ended_threads` (chamada em `create_thread`) libera as threads que terminaram e
+  cujo handle já foi fechado (`use_count() == 1` sob `g_threads_lock`): join da thread nativa, evento, `Ctx` e slot
+  de TLS, que volta por `mem::free_tls_slot` (lista de livres em `memory.cpp`). Região esgotada mesmo assim dá
+  `mem: TLS region full` e `fatal: too many guest threads`. `all_threads()` deixou de guardar todas as threads.
+- **Mesmo problema nos handles:** `HandleTable::add` fazia `(next_++ << 15) | 0x10` em 32 bits e dava a volta
+  depois de 131.072 handles, sobrescrevendo handles vivos (~36 min a uma thread por quadro). Agora o índice de 17
+  bits volta a 1 e pula valores ainda abertos (`handles.cpp`).
+- **Diagnóstico novo:** `kernel: N guest threads created, M kept` a cada 10.000 threads. Se `kept` crescer, o
+  jogo não fecha os handles das threads e a correção não basta.
+- **Testes:** `host_kernel_test` cria 40.000 threads curtas e exige o TLS reaproveitado (sem a correção falha em
+  "TLS slot reused"); `runtime_unit_test` ganhou `test_handle_table_wrap`. `tools/tests/host.cmake` não linkava o
+  `host_kernel_test` (faltava `host/sampler.cpp`). Rodados no Windows com o clang do MSYS2; no Linux, não.
+- **Validar:** jogar mais de 10 min (ou 20 no Deck) e ver as linhas `kernel: … kept` no `hwder.log`.
+- O `perf_stats` (só com `HWDER_PERF`) ainda guarda um registro por thread nativa; é diagnóstico.
+- Vale também para o HWDER (mesmo código).
+
 ## Retomar aqui (2026-11-16)
 
 **Build `8d32b02d…` enviado ao Deck em 2026-11-19 às ~21:50** (SHA-256 conferido): o de `465354ac…` mais o

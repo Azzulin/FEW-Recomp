@@ -154,7 +154,8 @@ void start_thread(Thread* t);
 // it waits on (Thread::wait_kind, for stall reports).
 bool park_current_thread(s64 timeout_ns, const char* kind = "wait", u64 obj = 0);
 void wake_thread(Thread* t);
-// Every thread ever created (kept alive for diagnostics).
+// Threads not yet reaped: running ones, and ended ones whose handle is still open. A thread that ended and that
+// nothing references (handle closed) is released on the next create_thread: TLS slot, Ctx, host thread and event.
 std::vector<std::shared_ptr<Thread>> all_threads();
 
 // ------------------------------------------------------------------ memory
@@ -185,6 +186,7 @@ Region query(u64 addr);
 u64 heap_size();
 Result set_heap_size(u64 size, u64* out_addr);
 u64 alloc_tls_slot();
+void free_tls_slot(u64 slot);  // a slot of a thread that ended and is no longer referenced
 u64 alloc_system(u64 size);  // kernel-owned guest-visible memory
 }  // namespace mem
 

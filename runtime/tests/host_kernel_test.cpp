@@ -34,6 +34,8 @@ extern "C" void hw_call(Ctx* context, u64 entry) {
         kern::g_kernel_lock.unlock();
         check(finished.load() == 1, "other thread acquired kernel lock while parked");
         host::event_signal(done);
+    } else if (entry == 2) {
+        // A short-lived thread: returns at once (ExitThread).
     } else check(false, "synthetic entry");
 }
 int main() {
@@ -59,5 +61,21 @@ int main() {
     host::event_release(thread->wake_event); thread->wake_event = nullptr;
     host::event_release(ready); host::event_release(done);
     host::aligned_release(thread->ctx); thread->ctx = nullptr;
+
+    // Threads that ended and whose handle was closed give their TLS slot back (issue #2: the 16 MiB TLS region
+    // ran out after ~32768 short-lived threads). Far more threads than the region holds, a few alive at a time.
+    const auto threads_before = kern::all_threads().size();
+    u64 first_tls = 0;
+    for (int i = 0; i < 40000; i++) {
+        auto t = kern::create_thread(2, 0x1234, 0x400010000full, 44, 0);
+        t->handle = kern::g_handles.add(t);
+        if (!first_tls) first_tls = t->tls;
+        check(t->tls >= kern::mem::kTlsBase && t->tls < kern::mem::kTlsBase + 0x1000, "TLS slot reused");
+        kern::start_thread(t.get());
+        while (!t->exited) host::thread_yield();
+        kern::g_handles.close(t->handle);  // the game's CloseHandle after joining the thread
+    }
+    check(kern::all_threads().size() <= threads_before + 1, "ended threads released");
+    check(first_tls != 0, "short-lived threads ran");
     std::puts("host kernel thread/lock/TLS checks passed");
 }

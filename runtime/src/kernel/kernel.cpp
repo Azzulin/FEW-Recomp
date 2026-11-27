@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include "sync.h"
 #include "debug_flags.h"
@@ -68,11 +69,40 @@ static std::atomic<u64> g_next_thread_id{0x50};
 
 static std::mutex g_threads_lock;
 static std::vector<std::shared_ptr<Thread>> g_threads;
+static u64 g_threads_created = 0;  // under g_threads_lock
 
 Thread* current_thread() { return t_current; }
 std::vector<std::shared_ptr<Thread>> all_threads() {
     std::lock_guard<std::mutex> l(g_threads_lock);
     return g_threads;
+}
+
+// Releases threads that ended and that nothing else references: their handle was closed (HOS frees a thread's TLS
+// and kernel object at that point too) and no all_threads() copy is in use. Both conditions are checked under
+// g_threads_lock, the only place a new reference could come from once the handle is gone. FEW creates a short-lived
+// thread about every frame; keeping them all exhausted the TLS region (issue #2) and leaked a Ctx, a host thread
+// handle and an event per thread.
+static void reap_ended_threads() {
+    std::vector<std::shared_ptr<Thread>> ended;
+    {
+        std::lock_guard<std::mutex> l(g_threads_lock);
+        auto keep = std::stable_partition(g_threads.begin(), g_threads.end(), [](const std::shared_ptr<Thread>& t) {
+            return !t->exited.load() || t.use_count() > 1;
+        });
+        std::move(keep, g_threads.end(), std::back_inserter(ended));
+        g_threads.erase(keep, g_threads.end());
+    }
+    for (auto& t : ended) {
+        // exited is set just before host::thread_exit, so the join waits at most for that thread to finish leaving.
+        if (t->host_handle) host::thread_join_release(t->host_handle);
+        t->host_handle = nullptr;
+        if (t->wake_event) host::event_release(t->wake_event);
+        t->wake_event = nullptr;
+        if (t->ctx) host::aligned_release(t->ctx);
+        t->ctx = nullptr;
+        if (t->tls) mem::free_tls_slot(t->tls);
+        t->tls = 0;
+    }
 }
 
 static void thread_main(void* p) {
@@ -88,6 +118,7 @@ static void thread_main(void* p) {
 }
 
 std::shared_ptr<Thread> create_thread(u64 entry, u64 arg, u64 stack_top, s32 priority, s32 core) {
+    reap_ended_threads();
     auto t = std::make_shared<Thread>();
     t->entry = entry;
     t->arg = arg;
@@ -107,6 +138,11 @@ std::shared_ptr<Thread> create_thread(u64 entry, u64 arg, u64 stack_top, s32 pri
     {
         std::lock_guard<std::mutex> l(g_threads_lock);
         g_threads.push_back(t);
+        // Every 10000 threads (~3 minutes at one per frame): a growing "kept" count means threads that end but
+        // whose handle the game never closes.
+        if (++g_threads_created % 10000 == 0)
+            hw_log("kernel: %llu guest threads created, %zu kept", (unsigned long long)g_threads_created,
+                   g_threads.size());
     }
     return t;
 }

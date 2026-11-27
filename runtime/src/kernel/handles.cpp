@@ -4,11 +4,21 @@
 
 namespace kern {
 
+// HOS-like handle values (non-zero, low bits set): (index << 15) | 0x10 with a 17-bit index, so the value fits in
+// 32 bits. The index wraps after 131071 handles (FEW opens one per short-lived thread, about every frame); values
+// still open are skipped, so a wrap never replaces a live handle.
 Handle HandleTable::add(ObjectPtr obj) {
     KGuard g(g_kernel_lock);
-    Handle h = (next_++ << 15) | 0x10;  // HOS-like handle values (non-zero, low bits set)
-    table_[h] = std::move(obj);
-    return h;
+    constexpr u32 kIndexEnd = 1u << 17;
+    for (u32 tries = 1; tries < kIndexEnd; tries++) {
+        Handle h = (next_ << 15) | 0x10;
+        next_ = next_ + 1 == kIndexEnd ? 1 : next_ + 1;
+        if (table_.count(h)) continue;
+        table_[h] = std::move(obj);
+        return h;
+    }
+    hw_fatal("handle table full");
+    return 0;
 }
 ObjectPtr HandleTable::get(Handle h) const {
     KGuard g(g_kernel_lock);

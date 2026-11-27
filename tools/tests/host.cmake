@@ -5,7 +5,7 @@ add_executable(host_file_test runtime/tests/host_file_test.cpp runtime/src/host/
 add_executable(host_values_test runtime/tests/host_values_test.cpp)
 add_executable(host_settings_test runtime/tests/host_settings_test.cpp runtime/src/gpu/settings.cpp)
 add_executable(host_platform_test runtime/tests/host_platform_test.cpp ${HOST_SERVICES})
-add_executable(host_kernel_test runtime/tests/host_kernel_test.cpp ${HOST_SERVICES}
+add_executable(host_kernel_test runtime/tests/host_kernel_test.cpp ${HOST_SERVICES} runtime/src/host/sampler.cpp
     runtime/src/kernel/kernel.cpp runtime/src/kernel/handles.cpp runtime/src/kernel/memory.cpp runtime/src/threads.cpp
     runtime/src/debug_flags.cpp runtime/src/perf_stats.cpp)
 # Interpolation sources include generated game symbols (game/hook.h); the full runtime build compiles them.

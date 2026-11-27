@@ -12,6 +12,7 @@ namespace kern::mem {
 static std::map<u64, Region> g_regions;  // start -> region (only non-Free regions are stored)
 static u64 g_heap_size = 0;
 static u64 g_tls_next = kTlsBase;
+static std::vector<u64> g_tls_free;  // slots of reaped threads, reused before g_tls_next advances
 static u64 g_system_next = kSystemBase;
 
 static void reserve(u64 addr, u64 size, const char* what, bool write_watch = false) {
@@ -130,13 +131,32 @@ Result set_heap_size(u64 size, u64* out_addr) {
     return ResultSuccess;
 }
 
+// The game creates short-lived threads all the time (about one per frame in FEW): slots of threads that ended come
+// back through free_tls_slot. Without reuse the 16 MiB region ran out after ~32768 threads (issue #2: "commit
+// failed" at kTlsBase + kTlsSize after ~9 minutes at 60 fps).
 u64 alloc_tls_slot() {
     KGuard g(g_kernel_lock);
-    u64 slot = g_tls_next;
-    if ((slot & 0xFFF) == 0) map(slot, 0x1000, ThreadLocal, RW);
-    g_tls_next += 0x200;
+    u64 slot;
+    if (!g_tls_free.empty()) {
+        slot = g_tls_free.back();
+        g_tls_free.pop_back();
+    } else {
+        if (g_tls_next + 0x200 > kTlsBase + kTlsSize) {
+            hw_log("mem: TLS region full: %llu guest threads alive at once",
+                   (unsigned long long)(kTlsSize / 0x200));
+            hw_fatal("too many guest threads");
+        }
+        slot = g_tls_next;
+        if ((slot & 0xFFF) == 0) map(slot, 0x1000, ThreadLocal, RW);
+        g_tls_next += 0x200;
+    }
     memset((void*)slot, 0, 0x200);
     return slot;
+}
+
+void free_tls_slot(u64 slot) {
+    KGuard g(g_kernel_lock);
+    g_tls_free.push_back(slot);
 }
 
 u64 alloc_system(u64 size) {
