@@ -16,6 +16,7 @@ código do jogo).
    release **em rascunho** com os dois, o `SHA256SUMS` e as notas.
 5. **Confira o rascunho** (*Releases*): as notas, os três arquivos. Baixe o zip, abra o Setup e veja se ele abre. Então
    **Publish release**. Deixe *Set as a pre-release* desmarcado: o RecompLauncher trata pré-release como beta.
+   Publicar cria a tag, e a tag dispara o workflow mais uma vez: essa execução curta só vê que a release existe e para.
 6. **Depois:** abra de novo um `## Unreleased` no CHANGELOG para a próxima versão, e responda as issues que a versão
    resolve.
 

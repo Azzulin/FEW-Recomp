@@ -35,34 +35,53 @@ jobs:
       VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
       MAKE_RELEASE: ${{ github.event_name == 'push' || inputs.release }}
     steps:
+      # Publishing a draft made from the Actions page creates its tag, and the tag runs this workflow again: nothing
+      # left to do then.
+      - name: Already released?
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:VERSION -R $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { "Release $env:VERSION already exists: nothing to do."; "SKIP=true" >> $env:GITHUB_ENV }
+          exit 0
+
       - uses: actions/checkout@v4
+        if: env.SKIP != 'true'
 
       - uses: actions/setup-python@v5
+        if: env.SKIP != 'true'
         with:
           python-version: "3.13"
 
       - name: Unit tests (no game, no network)
+        if: env.SKIP != 'true'
         run: python -m unittest tools/tests/test_build_events.py tools/tests/test_pipeline_catalog.py tools/tests/test_recomplauncher.py tools/tests/test_symbol_sigs.py tools/tests/test_release.py
 
       - name: Release notes from CHANGELOG.md
+        if: env.SKIP != 'true'
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           python tools/release_notes.py $env:VERSION > dist/notes.md
           if ($LASTEXITCODE) { if ($env:MAKE_RELEASE -eq 'true') { exit 1 } else { 'Dry run: no changelog section for this version.' | Set-Content dist/notes.md } }
 
       - name: Cache the pinned build tools
+        if: env.SKIP != 'true'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\HWDER
           key: managed-tools-${{ hashFiles('tools/managed_toolchain.json', 'tools/managed_tools.py') }}
 
       - name: Pinned build tools (LLVM-MinGW, CMake, Ninja, Python; each SHA-256 checked)
+        if: env.SKIP != 'true'
         run: python tools/managed_tools.py --data "$env:RUNNER_TEMP\HWDER" --install
 
       - name: Third-party sources at the pinned commits
+        if: env.SKIP != 'true'
         run: python tools/fetch_deps.py
 
       - name: Build FEW Recomp Setup.exe
+        if: env.SKIP != 'true'
         run: |
           $tc = (Get-ChildItem "$env:RUNNER_TEMP\HWDER\managed-tools" -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'complete.json') } | Select-Object -First 1).FullName
           & "$tc\output\python\python.exe" -B -X utf8 tools/build.py --managed-toolchain $tc --build-ui --build-dir build/ui --jobs 4
@@ -70,10 +89,11 @@ jobs:
           Get-Item build/ui/few-build-ui.exe | Format-List Name, Length
 
       - name: Packages
+        if: env.SKIP != 'true'
         run: python tools/recomplauncher/package.py --version $env:VERSION --setup-exe build/ui/few-build-ui.exe
 
       - name: Draft release
-        if: env.MAKE_RELEASE == 'true'
+        if: env.SKIP != 'true' && env.MAKE_RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,7 +104,7 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
 
       - name: Keep the files (dry run)
-        if: env.MAKE_RELEASE != 'true'
+        if: env.SKIP != 'true' && env.MAKE_RELEASE != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: FEW-Recomp-${{ env.VERSION }}
