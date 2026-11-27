@@ -97,8 +97,14 @@ NSPs, DLCs e update) e um processo de versão que ele mesmo consiga rodar.
   o setup, empacota (`package.py --setup-exe`, que também grava o `SHA256SUMS`), gera as notas do CHANGELOG
   (`tools/release_notes.py`) e cria a release **em rascunho**. `ci.yml` roda os testes a cada push. Pelo site:
   *Actions > Release > Run workflow* com a versão e "release" marcado.
-- **Falta:** o primeiro rodar real do workflow no GitHub (um ensaio sem release antes da primeira versão por ele) e o
-  setup numa máquina limpa (SmartScreen, download do toolchain do zero).
+- **Rodado no GitHub em 2026-11-27:** a v0.5.0 saiu pelo botão Run workflow (2 min 26 s, rascunho conferido: zip
+  baixado, `FEW Recomp Setup.exe` na raiz, aberto da pasta extraída, versão v0.5.0) e um ensaio `v0.0.0-test` passou
+  inteiro (artifact de 33 MB). Dois tropeços corrigidos: o contexto `runner` não vale nas variáveis do job, e o
+  PowerShell do GitHub termina o passo com o último código de saída (por isso o `exit 0` nas notas do ensaio).
+  Publicar o rascunho cria a tag, que roda o workflow de novo: o passo "Already released?" o encerra sem erro.
+- **Falta:** o setup numa máquina limpa (SmartScreen, download do toolchain do zero) e um build completo a partir de
+  um kit recém-extraído (o teste de ponta a ponta foi incremental, na pasta de desenvolvimento). Ações do GitHub em
+  Node 20 dão aviso de obsolescência (`checkout@v4`, `setup-python@v5`, `cache@v4`): subir de versão quando houver.
 
 ## Build 3x mais rápido e janela de progresso (2026-11-27, release v0.4.0)
 
