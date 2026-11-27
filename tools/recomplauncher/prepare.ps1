@@ -72,7 +72,9 @@ $state = @{ text = 'Starting'; base = 0.0; last = -1.0; when = [DateTime]::MinVa
 Write-Progress-Line 0 'Starting the build'
 
 $params = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'gerar-few.ps1'),
-            '-BaseNsp', $given['game'], '-UpdateNsp', $given['update'], '-Keys', $given['keys'], '-ToolsData', $tools)
+            '-BaseNsp', $given['game'], '-UpdateNsp', $given['update'], '-Keys', $given['keys'], '-ToolsData', $tools,
+            '-NoUi')  # the launcher shows its own progress: no build window
+
 $ErrorActionPreference = 'Continue'  # a native program's stderr is output here, not a failure
 & powershell.exe @params 2>&1 | ForEach-Object {
     $line = "$_"

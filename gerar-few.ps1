@@ -17,6 +17,7 @@
   .\gerar-few.ps1 -SoBuild   # pula update e geracao do C (so recompila o runtime)
   .\gerar-few.ps1 -BaseNsp D:\base.nsp -UpdateNsp D:\upd.nsp -Keys D:\prod.keys -ToolsData D:\cache
                              # arquivos por caminho, com qualquer nome (o setup do RecompLauncher usa assim)
+  .\gerar-few.ps1 -NoUi      # sem a janela de progresso (tools\build_ui), so este terminal
 #>
 [CmdletBinding()]
 param(
@@ -27,7 +28,8 @@ param(
     [string]$ToolsData,                                              # pasta do toolchain privado (padrao: %LOCALAPPDATA%\HWDER)
     [int]$Jobs = [Math]::Min(8, [Environment]::ProcessorCount),
     [switch]$SoBuild,
-    [switch]$Launch
+    [switch]$Launch,
+    [switch]$NoUi                                                    # sem a janela de progresso
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,11 +37,40 @@ $root = $PSScriptRoot
 if (-not $Jogo) { $Jogo = Join-Path $root 'Game Files' }  # Windows PowerShell 5.1: $PSScriptRoot is empty in param()
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = 'utf-8'
-function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
-function Fail($m) { Write-Host "ERRO: $m" -ForegroundColor Red; exit 1 }
+
+# Janela de progresso (tools\build_ui): le os eventos que este script e o tools\build.py gravam em
+# build\build-events.jsonl (formato em tools\build_events.py; os ids dos passos sao os de la). Compilada em segundo
+# plano enquanto o update e desempacotado e o C gerado; aberta antes de compilar. Fechar a janela nao para nada.
+$events = $null
+$env:FEW_EVENTS = $null
+if (-not $NoUi -and -not $env:RECOMPLAUNCHER -and [Environment]::UserInteractive) {
+    $events = Join-Path $root 'build\build-events.jsonl'
+    New-Item -ItemType Directory -Force -Path (Split-Path $events) | Out-Null
+    [IO.File]::WriteAllText($events, '')
+    $env:FEW_EVENTS = $events
+}
+function Send-BuildEvent([hashtable]$e) {
+    if (-not $script:events) { return }
+    $e['t'] = [Math]::Round([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0, 3)
+    $json = ConvertTo-Json -InputObject $e -Compress -Depth 4
+    try { [IO.File]::AppendAllText($script:events, $json + "`n", (New-Object System.Text.UTF8Encoding($false))) } catch {}
+}
+Send-BuildEvent @{ type = 'start'; title = 'Fire Emblem Warriors'; log = ''; steps = @(
+    @{ id = 'check'; label = 'Checking your files' }, @{ id = 'tools'; label = 'Getting the build tools' },
+    @{ id = 'update'; label = 'Unpacking update 1.5.0' }, @{ id = 'translate'; label = "Translating the game's code to C" },
+    @{ id = 'compile'; label = 'Compiling the game' }, @{ id = 'finish'; label = 'Finishing the game folder' }) }
+function Step($m, $id) {
+    Write-Host "`n==> $m" -ForegroundColor Cyan
+    if ($id) { Send-BuildEvent @{ type = 'step'; id = $id } }
+}
+function Fail($m) {
+    Write-Host "ERRO: $m" -ForegroundColor Red
+    Send-BuildEvent @{ type = 'error'; text = $m }
+    exit 1
+}
 
 # --- entradas ---------------------------------------------------------------------------------------------
-Step 'Entradas'
+Step 'Entradas' 'check'
 if ($BaseNsp -or $UpdateNsp) {
     # Arquivos dados um a um (setup do RecompLauncher): o ticket do update diz a versao ao desempacotar.
     foreach ($f in @($BaseNsp, $UpdateNsp, $Keys)) {
@@ -71,7 +102,7 @@ Write-Host "update: $($upd[0].Name)"
 Write-Host "keys  : $Keys"
 
 # --- third_party ------------------------------------------------------------------------------------------
-Step 'third_party'
+Step 'third_party' 'tools'
 $deps = @(
     @('SDL',            'https://github.com/libsdl-org/SDL.git',               'f5e5f6588921eed3d7d048ce43d9eb1ff0da0ffc', 'CMakeLists.txt'),
     @('imgui',          'https://github.com/ocornut/imgui.git',               'ed73ef4e84c9488256c5710de6ff1ebc2c9a8496', 'imgui.cpp'),
@@ -139,12 +170,28 @@ if (-not $managed) {
 $py = Join-Path $managed 'output\python\python.exe'
 Write-Host "toolchain: $managed"
 
+# A janela compila em segundo plano (build\ui, ~1 min na primeira vez; depois so o que mudou) e o proprio
+# tools\build.py a abre quando fica pronta: o build do jogo nao espera por ela.
+if ($events) {
+    $uiDir = Join-Path $root 'build\ui'
+    New-Item -ItemType Directory -Force -Path $uiDir | Out-Null
+    $q = { param($s) '"' + $s + '"' }  # Start-Process junta os argumentos sem aspas
+    $uiArgs = @('-B', '-X', 'utf8', (& $q (Join-Path $root 'tools\build.py')), '--managed-toolchain', (& $q $managed),
+                '--build-ui', '--jobs', '4', '--build-dir', (& $q $uiDir), '--open-events', (& $q $events),
+                '--watch-pid', $PID)
+    try {
+        Start-Process -FilePath $py -ArgumentList $uiArgs -NoNewWindow `
+            -RedirectStandardOutput (Join-Path $uiDir 'ui-build.log') -RedirectStandardError (Join-Path $uiDir 'ui-build.err.log') | Out-Null
+        Write-Host "janela de progresso: compilando em segundo plano; abre sozinha (log: $uiDir\ui-build.log)"
+    } catch { Write-Host "(a janela de progresso nao pode ser compilada: $($_.Exception.Message); o build segue aqui)" }
+}
+
 $data = Join-Path $root 'data'
 $gen = Join-Path $root 'generated'
 $build = Join-Path $root 'build\pc'
 if (-not $SoBuild) {
     # --- update ------------------------------------------------------------------------------------------
-    Step 'Update 1.5.0 (ExeFS + patch do RomFS)'
+    Step 'Update 1.5.0 (ExeFS + patch do RomFS)' 'update'
     $stamp = Join-Path $data 'update\source.txt'
     $sig = "$($upd[0].FullName)|$($upd[0].Length)|$($upd[0].LastWriteTimeUtc.Ticks)"
     if ((Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $sig) -and (Test-Path (Join-Path $data 'update\update.json'))) {
@@ -173,14 +220,14 @@ if (-not $SoBuild) {
     }
 
     # --- ARM64 -> C --------------------------------------------------------------------------------------
-    Step 'Traduzindo ARM64 -> C (generated\)'
+    Step 'Traduzindo ARM64 -> C (generated\)' 'translate'
     & $py -B -X utf8 -c "import sys, runpy; sys.path.insert(0, sys.argv[1]); sys.argv = ['gen_main', '--exefs', sys.argv[2], '--out', sys.argv[3]]; runpy.run_module('recomp.gen_main', run_name='__main__')" `
         (Join-Path $root 'tools') (Join-Path $data 'update\exefs') $gen
     if ($LASTEXITCODE) { Fail 'Geracao do C falhou.' }
 }
 
 # --- compilar ---------------------------------------------------------------------------------------------
-Step "Compilando (build\pc, $Jobs jobs)"
+Step "Compilando (build\pc, $Jobs jobs)" 'compile'
 & $py -B -X utf8 (Join-Path $root 'tools\build.py') --managed-toolchain $managed --build-dir $build --generated-dir $gen --jobs $Jobs
 if ($LASTEXITCODE) { Fail 'Compilacao falhou (rodar de novo retoma).' }
 $exe = Join-Path $build 'few.exe'
@@ -188,7 +235,7 @@ if (-not (Test-Path $exe)) { Fail "Nao achei $exe" }
 
 # --- publicar ---------------------------------------------------------------------------------------------
 $out = Join-Path $root 'Jogar no PC'
-Step "Publicando em $out"
+Step "Publicando em $out" 'finish'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $dst = Join-Path $out 'few.exe'
 if (Get-Process -Name few -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $dst }) { Fail 'O jogo esta aberto; feche e rode de novo.' }
@@ -206,4 +253,5 @@ $o = @($o) + @($values.Keys | Where-Object { -not $seen[$_] } | ForEach-Object {
 [IO.File]::WriteAllText($ini, (($o -join "`n") + "`n"), $utf8)
 
 Write-Host "`nPronto: $dst" -ForegroundColor Green
+Send-BuildEvent @{ type = 'done'; play = $dst; folder = $out }
 if ($Launch) { Start-Process -FilePath $dst -WorkingDirectory $out }

@@ -36,6 +36,7 @@ TOOLS = ROOT / "tools"
 sys.path.insert(0, str(TOOLS))
 import linux_setup  # noqa: E402  (HWDER's Linux setup: pinned toolchain download and checks)
 import game_profile  # noqa: E402  (title IDs of the releases the build accepts)
+import build_events  # noqa: E402  (steps and progress for the build window, tools/build_ui)
 
 DEPS_RELEASE = {  # HWDER v0.3.5 Linux release: only its linux-deps folder is used (static SDL3, FFmpeg, libcrypto)
     "url": "https://github.com/blocker-3/HWDER/releases/download/v0.3.5/HWDER-linux-x86_64-v0.3.5.tar.gz",
@@ -83,8 +84,11 @@ class Tee:
         return getattr(self.stream, name)
 
 
-def step(text):
+def step(text, event_id=None):
+    """Prints a step; event_id (build_events.STEPS) also moves the build window to it."""
     print(f"\n==> {text}", flush=True)
+    if event_id:
+        build_events.emit("step", id=event_id)
 
 
 def info(text):
@@ -391,6 +395,36 @@ def compile_game(python, env, jobs, march):
     return exe
 
 
+# ---- Build window ----------------------------------------------------------------------------------------------
+# tools/build_ui: a window with the steps and the progress, next to this terminal. tools/build.py compiles it in the
+# background (half a minute: SDL comes prebuilt) and opens it when it is ready, so the build never waits for it. It
+# only reads FEW_EVENTS: closing it changes nothing, and if it cannot be built or shown the build goes on here.
+
+UI_BUILD = ROOT / "build" / "ui-linux"
+EVENTS = ROOT / "build" / "build-events.jsonl"
+
+
+def window_wanted(a):
+    return (not a.no_ui and not a.tools_only and not os.environ.get("RECOMPLAUNCHER")
+            and bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")))
+
+
+def start_window_build(python, env):
+    UI_BUILD.mkdir(parents=True, exist_ok=True)
+    log = UI_BUILD / "ui-build.log"
+    try:
+        with open(log, "w", encoding="utf-8") as out:
+            process = subprocess.Popen(
+                [str(python), "-B", "-X", "utf8", str(TOOLS / "build.py"), "--build-ui", "--jobs", "2",
+                 "--build-dir", str(UI_BUILD), "--open-events", str(EVENTS), "--watch-pid", str(os.getpid())],
+                cwd=str(ROOT), env=env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        info(f"Build window: being compiled in the background, it opens by itself (log: {log})")
+        return process
+    except OSError as e:
+        info(f"(the build window could not be compiled: {e}; the build goes on here)")
+        return None
+
+
 # ---- Game folder -----------------------------------------------------------------------------------------------
 
 def write_settings(ini, values, defaults):
@@ -472,6 +506,7 @@ def main(argv=None):
                        help="add the game to Steam without asking (closes and reopens Steam)")
     steam.add_argument("--no-steam", dest="steam", action="store_false", help="do not touch Steam")
     ap.add_argument("--launch", action="store_true", help="start the game when the build is done")
+    ap.add_argument("--no-ui", action="store_true", help="no build window: the progress only in this terminal")
     ap.add_argument("--tools-only", action="store_true", help="only install the build tools")
     ap.add_argument("--tools-dir", default="", help="where the build tools go (default: ~/.local/share/FEW-Recomp)")
     a = ap.parse_args(argv)
@@ -488,8 +523,14 @@ def main(argv=None):
         log.write(f"build-linux.sh {' '.join(argv if argv is not None else sys.argv[1:])} - "
                   f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         sys.stdout, sys.stderr = Tee(sys.stdout, log), Tee(sys.stderr, log)
+    if window_wanted(a):
+        os.environ["FEW_EVENTS"] = str(EVENTS)  # read by tools/build.py too, for the compile progress
+        build_events.EventLog(EVENTS).start("Fire Emblem Warriors", log=LOG)
+    else:
+        os.environ.pop("FEW_EVENTS", None)
+    window_build = None
     try:
-        step("Checking this computer")
+        step("Checking this computer", "check")
         check_machine(out_dir)
         info(f"{'Steam Deck' if on_deck else 'Linux PC'}, {os.cpu_count()} CPU threads, "
              f"{jobs} parallel compiles, CPU target {march or 'generic AVX2'}")
@@ -499,7 +540,7 @@ def main(argv=None):
                 base, update, keys = given_inputs(a.base, a.update, a.keys)
             else:
                 base, update, keys = find_inputs(a.game_dir, a.keys)
-        step(f"Build tools (downloaded once, about 190 MB, kept in {tools_dir})")
+        step(f"Build tools (downloaded once, about 190 MB, kept in {tools_dir})", "tools")
         tc = ensure_toolchain(tools_dir)
         deps = ensure_linux_deps(tools_dir)
         ensure_third_party()
@@ -508,31 +549,38 @@ def main(argv=None):
             return 0
         env = build_env(tc, deps)
         python = linux_setup.tool_paths(tc)["python"]
-        step("Unpacking update 1.5.0 (data/update)")
+        if os.environ.get("FEW_EVENTS"):
+            window_build = start_window_build(python, env)
+        step("Unpacking update 1.5.0 (data/update)", "update")
         update_dir = unpack_update(python, env, update, keys)
         merge_found_entries(out_dir)
-        step("Translating the game's ARM64 code to C (generated/)")
+        step("Translating the game's ARM64 code to C (generated/)", "translate")
         translate(python, env, update_dir)
-        step(f"Compiling ({jobs} at a time; the first time takes hours, later runs only redo what changed)")
+        step(f"Compiling ({jobs} at a time; the first time takes hours, later runs only redo what changed)", "compile")
         exe = compile_game(python, env, jobs, march)
-        step(f"Game folder: {out_dir}")
+        step(f"Game folder: {out_dir}", "finish")
         publish(exe, out_dir, base, keys, update_dir, deck)
         info("few, few-steam.sh, hwder_settings.ini" + (", hwder_env.txt" if deck else "") + ", save/")
         if a.steam is not False:
             step("Steam shortcut")
+            build_events.emit("progress", id="finish", fraction=-1,
+                              text="Adding the game to Steam: answer in the terminal if it asks")
             if a.steam is None and not sys.stdin.isatty():
                 info("skipped (no terminal to ask in); run again with --steam to add it")
             elif not add_to_steam(out_dir, True if a.steam else None):
                 info("not added; you can run the script again with --steam later")
     except BuildError as e:
         print(f"\nERROR: {e}", file=sys.stderr, flush=True)
+        build_events.emit("error", text=str(e))
         if not a.tools_only and not os.environ.get("RECOMPLAUNCHER"):  # the launcher keeps its own full log
             print(f"Everything shown here is also in {LOG}: attach that file if you report the problem.",
                   file=sys.stderr, flush=True)
         return 1
     except KeyboardInterrupt:
         print("\nStopped. Run the script again to continue where it stopped.", file=sys.stderr)
+        build_events.emit("error", text="Stopped with Ctrl+C. Run the build again to continue where it stopped.")
         return 130
+    build_events.emit("done", play=str(out_dir / "few-steam.sh"), folder=str(out_dir))
     minutes = (time.time() - started) / 60
     print(f"\nDone in {minutes:.0f} min. Play: {out_dir / 'few-steam.sh'}"
           + ("  (or 'Fire Emblem Warriors' in Steam, under Non-Steam)" if a.steam is not False else ""), flush=True)

@@ -109,7 +109,7 @@ def pump(stream, progress):
 
 def command(game, update, keys, tools):
     build = [sys.executable, "-u", str(ROOT / "tools" / "linux" / "few_build.py"), "--base", game, "--update", update,
-             "--keys", keys, "--no-steam", "--tools-dir", str(tools)]
+             "--keys", keys, "--no-steam", "--no-ui", "--tools-dir", str(tools)]  # the launcher shows the progress
     # The first build takes hours: keep the machine awake when allowed (as build-linux.sh does).
     try:
         allowed = subprocess.run(["systemd-inhibit", "--what=sleep:idle", "--who=FEW-Recomp", "--why=check", "true"],

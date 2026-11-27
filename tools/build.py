@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_lock import build_lock
+import build_events
 
 ROOT = str(Path(__file__).resolve().parent.parent)
 
@@ -74,12 +75,16 @@ def main():
     modes.add_argument("--host-tests", action="store_true", help="configure only portable host contract tests")
     modes.add_argument("--game-only", action="store_true", help="compile generated game library without host runtime")
     modes.add_argument("--setup-ui", action="store_true", help="build only the code-free native Windows setup window")
+    modes.add_argument("--build-ui", action="store_true",
+                       help="build only the build window (tools/build_ui: progress of a game build; no game code)")
+    ap.add_argument("--open-events", type=Path, help="--build-ui: then open the window on this events file")
+    ap.add_argument("--watch-pid", type=int, default=0, help="--build-ui: the build the window follows")
     modes.add_argument("--managed-probe", action="store_true", help="public Windows GNU-ABI compatibility contracts; no game inputs")
     modes.add_argument("--managed-runtime-link", action="store_true", help="link public runtime/SDL with reviewed synthetic guest fixture; NEVER run")
     a = ap.parse_args()
     if a.jobs < 1:
         ap.error("--jobs must be at least 1")
-    if a.only_file and (a.synthetic_tests or a.host_tests or a.game_only or a.setup_ui or a.managed_probe or a.managed_runtime_link):
+    if a.only_file and (a.synthetic_tests or a.host_tests or a.game_only or a.setup_ui or a.build_ui or a.managed_probe or a.managed_runtime_link):
         ap.error("--only-file cannot be combined with a test/library mode")
     if a.host_tests and not (Path(ROOT) / "tools/tests/host.cmake").is_file():
         ap.error("--host-tests requires tools/tests/host.cmake from the complete source kit")
@@ -87,13 +92,47 @@ def main():
         ap.error("--managed-probe requires a certified --managed-toolchain")
     if a.managed_runtime_link and (not a.managed_toolchain or not a.generated_dir):
         ap.error("--managed-runtime-link requires private tools and a public fixture directory")
+    if a.build_ui:
+        # Its own build directory and nothing shared but read-only tools: it runs next to the game's build, which
+        # must not wait for it.
+        return build(a)
     # Single-file probes and complete builds share the same host reservation.
     with build_lock():
         return build(a)
 
 
+def build_window(a, bdir, env, cmake, ninja, cc, cxx):
+    """The build window (tools/build_ui), its own small CMake project: SDL3 from third_party on Windows, from the
+    prebuilt Linux libraries on Linux. Writes <build dir>/few-build-ui(.exe)."""
+    args = [cmake, "-S", os.path.join(ROOT, "tools", "build_ui"), "-B", bdir, "-G", "Ninja",
+            f"-DCMAKE_MAKE_PROGRAM={ninja}", "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_C_COMPILER={cc}",
+            f"-DCMAKE_CXX_COMPILER={cxx}"]
+    if sys.platform.startswith("linux"):
+        args += [f"-DHWDER_LINUX_DEPS={env.get('HWDER_LINUX_DEPS', '')}", "-DCMAKE_LINK_DEPENDS_USE_LINKER=OFF"]
+        args += [f"-DCMAKE_{name}={env[f'HWDER_{name}']}" for name in ("AR", "RANLIB") if env.get(f"HWDER_{name}")]
+    result = subprocess.run(args, env=env)
+    if result.returncode:
+        return result.returncode
+    code = subprocess.run([ninja, "-C", bdir, "-j", str(a.jobs), "few_build_ui"], env=env).returncode
+    if code or not a.open_events:
+        return code
+    # Opened from here, when it is ready, so the game's build never waits for it. Detached: it outlives this process
+    # and the terminal, and says so when the build it watches (--pid) is gone without finishing.
+    exe = os.path.join(bdir, "few-build-ui.exe" if os.name == "nt" else "few-build-ui")
+    command = [exe, "--events", str(a.open_events), "--pid", str(a.watch_pid)]
+    if os.name == "nt":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(command, cwd=ROOT, creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True)
+    else:
+        subprocess.Popen(command, cwd=ROOT, start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"build window opened ({exe})", flush=True)
+    return 0
+
+
 def build(a):
-    mode = "runtime-link-NOT-A-GAME" if getattr(a,"managed_runtime_link",False) else "probe" if getattr(a, "managed_probe", False) else "setup-ui" if a.setup_ui else "synthetic" if a.synthetic_tests else "host" if a.host_tests else "game" if a.game_only else "release"
+    mode = "runtime-link-NOT-A-GAME" if getattr(a,"managed_runtime_link",False) else "probe" if getattr(a, "managed_probe", False) else "build-ui" if getattr(a, "build_ui", False) else "setup-ui" if a.setup_ui else "synthetic" if a.synthetic_tests else "host" if a.host_tests else "game" if a.game_only else "release"
     managed = getattr(a, "managed_toolchain", None)
     bdir = os.path.abspath(a.build_dir or os.path.join(ROOT, "build", ("managed-" if managed else "") + mode))
     generated = os.path.abspath(a.generated_dir or os.path.join(ROOT, "generated"))
@@ -103,6 +142,8 @@ def build(a):
         public_runtime_fixture.verify(generated)
     os.makedirs(bdir, exist_ok=True)
     env, cmake, ninja, cc, cxx = toolchain(managed, getattr(a, "managed_temp_dir", None))
+    if getattr(a, "build_ui", False):
+        return build_window(a, bdir, env, cmake, ninja, cc, cxx)
     if a.only_file:
         version_dir = os.path.join(bdir, "version")
         result = subprocess.run([cmake, f"-DSRC={ROOT}", f"-DOUT={version_dir}/hwder_version.h",
@@ -153,7 +194,8 @@ def build(a):
     if result.returncode:
         return result.returncode
     target = a.target or ("managed_compatibility" if getattr(a, "managed_probe", False) else "hwder_setup" if a.setup_ui else "synthetic_tests" if a.synthetic_tests else "host_tests" if a.host_tests else "hwder_game" if a.game_only else "hwder")
-    return subprocess.run([ninja, "-C", bdir, "-j", str(a.jobs), target], env=env).returncode
+    # With FEW_EVENTS set (the build window is open), the progress also goes there (tools/build_events.py).
+    return build_events.run_ninja(ninja, bdir, a.jobs, target, env, ROOT)
 
 
 if __name__ == "__main__":
