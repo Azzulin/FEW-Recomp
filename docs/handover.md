@@ -68,6 +68,26 @@ Build no Linux:
   (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
   administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
 
+## Issue #3: build no Steam Deck (2026-11-26, falta testar num Deck)
+
+Relato: o download "não acaba" e no fim aparece algo como "fail updated"; pede um jeito de instalar sem Konsole.
+Sem log do usuário; a mensagem provável era `Could not unpack the update`, a primeira etapa depois dos downloads.
+
+- **`build-linux.sh`**: aberto por duplo clique (sem terminal, com `DISPLAY`/`WAYLAND_DISPLAY`), reabre em
+  `konsole` (ou gnome-terminal, kgx, xfce4-terminal, x-terminal-emulator, xterm) com `FEW_IN_TERMINAL=1`; nesse
+  modo espera Enter no fim, com sucesso ou erro. O `systemd-inhibit` virou a função `build` (antes era `exec`).
+  O duplo clique precisa do bit de execução no git (`git update-index --chmod=+x build-linux.sh`, modo 100755).
+- **`linux_setup.download`**: baixa em `<arquivo>.part` e continua com `Range` (servidor que responde 200 recomeça
+  do zero; 416 apaga a parte). Continua também na execução seguinte, porque `downloads/` só é apagada no sucesso.
+  Desiste após 6 tentativas seguidas sem progresso; a linha de progresso mostra MB/s e o tempo restante. Teste com
+  servidor local: conexão caindo duas vezes, `.part` de execução anterior, servidor sem `Range`, hash errado.
+- **`game_update.main`/`explain`**: o `gerar-few.ps1` e o `few_build.py` chamam `g.main` e mostram uma linha
+  `update: <motivo>` em vez do traceback (NSP de outra região, `titlekek_XX` ou `header_key` faltando no
+  `prod.keys`, NSP sem ticket, NSP danificado). `unpack` recusa versão diferente de `UPDATE_VERSION` antes de gravar.
+- **`few_build.py`**: copia toda a saída para `build-linux.log` na raiz (as linhas de progresso com `\r` ficam
+  fora). Não vale para `--tools-only` (WSL).
+- O build continua levando horas no Deck; a saída mais rápida segue sendo o `gerar-deck.ps1` no Windows.
+
 ## Crash da issue #2: região de TLS esgotada (2026-11-26, falta validar no jogo)
 
 Issue #2 ("Game crashed going to Camp menu", Windows, RTX 3080 Ti): o log termina em

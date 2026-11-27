@@ -98,9 +98,9 @@ if (-not $SoBuild) {
     if ((Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $sig) -and (Test-Path (Join-Path $data 'update\update.json'))) {
         Write-Host 'ja desempacotado'
     } else {
-        & $py -I -B -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import game_update as g; g.unpack(*sys.argv[2:5])" `
+        & $py -I -B -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import game_update as g; sys.exit(g.main(sys.argv[2:5]))" `
             (Join-Path $root 'tools') $upd[0].FullName $Keys (Join-Path $data 'update')
-        if ($LASTEXITCODE) { Fail 'Falha ao desempacotar o update.' }
+        if ($LASTEXITCODE) { Fail 'Falha ao desempacotar o update (o motivo esta na linha "update:" acima).' }
         Set-Content -LiteralPath $stamp -Value $sig -Encoding utf8
     }
 

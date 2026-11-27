@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nx_extract as nx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from game_profile import PROGRAM_ID, UPDATE_ID
+from game_profile import PROGRAM_ID, UPDATE_ID, UPDATE_VERSION
 
 
 def _tickets(files, read):
@@ -86,6 +86,10 @@ def unpack(path, keys_path, out_dir):
             program = (name, off, size, hdr)
     if not program:
         raise ValueError("The update has no program content")
+    version = _version(f, files, keys, tk)
+    if version != UPDATE_VERSION:
+        raise ValueError(f"This is update v{version}; the generated code is built from update 1.5.0 "
+                         f"(v{UPDATE_VERSION}). Use that update.")
     name, off, size, hdr = program
     secs = _sections(hdr)
     if name.endswith(".ncz"):
@@ -131,7 +135,7 @@ def unpack(path, keys_path, out_dir):
     for n, data in exefs.items():
         (out_dir / "exefs" / n).write_bytes(data)
     (out_dir / "romfs.patch").write_bytes(patch)
-    meta = {"schema": 1, "title_id": f"{UPDATE_ID:016x}", "version": _version(f, files, keys, tk),
+    meta = {"schema": 1, "title_id": f"{UPDATE_ID:016x}", "version": version,
             "indirect_offset": ind_off, "indirect_size": ind_size, "indirect_count": ind_count,
             "romfs_offset": lvl_off, "romfs_size": lvl_size, "patch_size": len(patch)}
     (out_dir / "update.json").write_text(json.dumps(meta, indent=1))
@@ -179,5 +183,38 @@ def _version(f, files, keys, tk):
     raise ValueError("The update's content meta is missing")
 
 
+def explain(error):
+    """A failure of unpack() in words a player can act on (the build scripts print this instead of a traceback)."""
+    if isinstance(error, KeyError):
+        missing = str(error.args[0]) if error.args else "?"
+        if missing.startswith("missing title key"):
+            return ("The update NSP has no ticket (title key) for its content. Dump the update again as an .nsp with "
+                    "its ticket.")
+        return (f"prod.keys has no '{missing}'. Dump prod.keys again from your console, on a firmware at least as "
+                "new as the one that installed the update, and put it in place of the old one.")
+    if isinstance(error, FileNotFoundError):
+        return f"File not found: {error.filename}"
+    if isinstance(error, MemoryError):
+        return "Not enough free memory to unpack the update; close other programs and run the build again."
+    text = str(error)
+    if text.startswith("Not the game's update"):
+        return (f"{text}. This file is not the update 1.5.0 of Fire Emblem Warriors for the US release "
+                f"({UPDATE_ID:016X}); other regions are not supported.")
+    if "PFS0" in text or "NCA3" in text:
+        return f"This file is not a readable NSP ({text}). It may be damaged or incomplete; copy it again."
+    return f"{type(error).__name__}: {text}" if text else type(error).__name__
+
+
+def main(argv):
+    """Unpacks like unpack(), printing a plain reason on failure; returns the exit code. Used by the build scripts."""
+    try:
+        meta = unpack(*argv[:3])
+    except Exception as e:  # noqa: BLE001 - every failure becomes one readable line
+        print(f"update: {explain(e)}", file=sys.stderr, flush=True)
+        return 1
+    print(f"update: v{meta['version']} unpacked", flush=True)
+    return 0
+
+
 if __name__ == "__main__":
-    print(json.dumps(unpack(*sys.argv[1:4]), indent=1))
+    sys.exit(main(sys.argv[1:4]))

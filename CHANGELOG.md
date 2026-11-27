@@ -7,6 +7,13 @@
   memory that was never given back; the log ended in `mem: commit failed` / `fatal: commit`. Slots, CPU contexts
   and host threads of finished threads are now released, and kernel handle numbers no longer collide after
   131,072 handles.
+- **Steam Deck / Linux build without typing commands** (#3): double-click `build-linux.sh` in the file manager and
+  choose *Execute*; it opens its own terminal window and keeps it open at the end so the result can be read.
+- Tool downloads continue where they stopped after a dropped connection or a closed window, instead of starting
+  over, and the progress line shows the speed and the time left.
+- When the update cannot be unpacked, the build says why (not the US update 1.5.0, a key missing from `prod.keys`,
+  a damaged NSP) instead of a Python error, and it refuses an update other than 1.5.0 up front.
+- The Linux build saves everything it prints in `build-linux.log`, to attach to a problem report.
 
 ## FEW Recomp v0.2.0 (2026-11-24)
 

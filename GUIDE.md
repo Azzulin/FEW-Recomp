@@ -115,9 +115,12 @@ Bluetooth keyboard helps, or press **Steam + X** for the on-screen keyboard.
 3. **Your game files:** inside `FEW-Recomp`, create a folder `Game Files` (right-click → *Create New* → *Folder*)
    and copy your NSPs and `prod.keys` into it (from a USB drive, an SD card or over the network). Or leave the NSPs
    where they are and use `--game-dir` in step 5.
-4. **Open a terminal there:** open the `FEW-Recomp` folder in Dolphin and press **F4** (or right-click → *Open
-   Terminal Here*). A terminal panel opens in that folder.
-5. **Build:** type
+4. **Build without typing anything:** in Dolphin, open the `FEW-Recomp` folder and double-click **`build-linux.sh`**,
+   then choose **Execute**. A terminal window opens and shows the build; leave it open until it says *Finished*
+   (or shows an error), then press Enter to close it. Skip step 5. If double-clicking opens the file as text instead,
+   right-click it → *Properties* → *Permissions* → tick *Is executable*, and try again; or use step 5.
+5. **Or build from a terminal:** open the `FEW-Recomp` folder in Dolphin and press **F4** (or right-click → *Open
+   Terminal Here*). A terminal panel opens in that folder. Type
 
    ```bash
    bash build-linux.sh
@@ -130,9 +133,11 @@ Bluetooth keyboard helps, or press **Steam + X** for the on-screen keyboard.
    bash build-linux.sh --game-dir "/run/media/deck/<card>/Switch/Fire Emblem Warriors"
    ```
 
-   The script downloads its tools, unpacks the update, translates and compiles the game. The first time this takes
-   **a few hours** on the Deck: leave it plugged in with the terminal open (the script keeps the Deck from sleeping).
-   If it gets interrupted, run the same command again: it continues where it stopped.
+   The script downloads its tools (about 190 MB; the progress line shows the speed and the time left), unpacks the
+   update, translates and compiles the game. The first time this takes **a few hours** on the Deck: leave it plugged
+   in with the terminal open (the script keeps the Deck from sleeping). If it gets interrupted, run it again: it
+   continues where it stopped, downloads included. Everything it prints is also saved in `build-linux.log`.
+   If you have a Windows PC, building there for the Deck ([section 5C](#5c-steam-deck-built-on-a-windows-pc)) is faster.
 6. **Add to Steam:** at the end it asks *Close Steam now?* — type `y` and Enter. Steam closes, the game is added
    as **Fire Emblem Warriors** (with artwork), and Steam opens again.
 7. **Play:** double-click *Return to Gaming Mode* on the desktop. The game is in your library under **Non-Steam**.
@@ -252,7 +257,7 @@ Deck; it keeps its own settings and saves.
 | `Esperava 1 NSP da base …` / `… do update …` | Base or update NSP missing, duplicated, or its name lacks the title ID in brackets |
 | `prod.keys nao encontrado` | Put `prod.keys` in `Game Files` or next to the script, or pass `-Keys` |
 | `Sem toolchain privado e sem Python no sistema` | Install Python 3 (with *Add to PATH*) and run again |
-| `Falha ao desempacotar o update` | Keys don't match the dump, or the update is not 1.5.0 |
+| `Falha ao desempacotar o update` | The line starting with `update:` just above says why (wrong file, a key missing from `prod.keys`, or not update 1.5.0) |
 | `Compilacao falhou` | Run again (it resumes); if it keeps failing, try `-Jobs 4` and report it |
 | `O jogo esta aberto` | Close `few.exe` before rebuilding |
 
@@ -264,8 +269,10 @@ Deck; it keeps its own settings and saves.
 | `... is on a exfat drive` / `does not allow running programs` | Move the source folder to the internal storage (`/home/deck`) or an ext4/btrfs drive; NSPs can stay where they are with `--game-dir` |
 | `Not enough free space` | Free about 8 GB on that drive |
 | `Expected 1 base game NSP …` / `… update 1.5.0 NSP …` | Check the file names have the title IDs in brackets and the files are in `Game Files` (or `--game-dir`) |
-| `Could not download …` | Check the internet connection and run again |
-| `Could not unpack the update` | Keys don't match the dump, or the update is not 1.5.0 |
+| `Could not download …` | Check the internet connection and run again: the download continues where it stopped |
+| A download seems stuck | The progress line shows the speed and the time left; a dropped connection is retried by itself. If you close the window, the next run continues the download |
+| `Could not unpack the update` | The line starting with `update:` just above says why: not the US update 1.5.0, a key missing from `prod.keys` (dump the keys again), or a damaged NSP (copy it again) |
+| Double-clicking `build-linux.sh` opens it as text | Right-click → *Properties* → *Permissions* → *Is executable*, or run `bash build-linux.sh` in a terminal |
 | `Compiling failed` / `Killed` / `signal 9` during the compile | Out of memory: close other programs and run `bash build-linux.sh --jobs 2` (it resumes). Log: `build/linux/build.log` |
 | The build stopped when the screen turned off | Run the command again; it continues. Keep the Deck plugged in |
 | Not in Steam | Sign in to Steam once, then `bash build-linux.sh --steam` |
@@ -284,7 +291,7 @@ Open an issue at <https://github.com/Azzulin/FEW-Recomp/issues> with:
 
 - where you play (Windows with CPU/GPU/driver, Linux distribution and GPU, or Steam Deck) and the release or commit;
 - what you did and what happened (a screenshot or short clip helps);
-- `hwder.log` from the game folder, and for build problems the end of the script's output (on Linux,
-  `build/linux/build.log`).
+- `hwder.log` from the game folder, and for build problems the end of the script's output (on Linux, the whole
+  output is in `build-linux.log` next to the script, and the compiler's in `build/linux/build.log`).
 
 **Never attach game files, keys, the built `few`/`few.exe` or saves.** The logs contain none of them.

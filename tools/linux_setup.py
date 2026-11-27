@@ -282,34 +282,75 @@ def toolchain_ready(root=ROOT):
     return sizes is not None and marker.get("sizes", sizes) == sizes
 
 
+def _duration(seconds):
+    return f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min"
+
+
 def download(url, target, expected_sha256, size, report, label):
-    """Streams `url` into `target`, checking size and SHA-256; retries a few times."""
-    last_error = None
-    for attempt in range(4):
-        if attempt:
-            time.sleep(2 ** attempt)
-        h, done = hashlib.sha256(), 0
+    """Streams `url` into `target`, checking size and SHA-256. The bytes go to `<target>.part` first: a dropped
+    connection continues where it stopped (HTTP Range), also on the next run after the script was closed, instead of
+    starting over. It gives up only after 6 attempts in a row that brought nothing."""
+    target = Path(target)
+    part = target.with_name(target.name + ".part")
+    last_error, failures = None, 0
+    while failures < 6:
+        if failures:
+            report.log(f"{label}: connection lost ({last_error}); trying again")
+            time.sleep(min(30, 2 ** failures))
+        done = part.stat().st_size if part.is_file() else 0
+        if done > size:
+            part.unlink()
+            done = 0
+        before = done
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "HWDER-Setup"})
-            with urllib.request.urlopen(request, timeout=60) as reply, open(target, "wb") as out:
-                while True:
-                    chunk = reply.read(1 << 20)
-                    if not chunk:
-                        break
-                    done += len(chunk)
-                    if done > size:
-                        raise SetupError(f"{label}: the download is larger than expected")
-                    h.update(chunk)
-                    out.write(chunk)
-                    report.progress(done / size, f"{label}: {done / 1e6:.0f} of {size / 1e6:.0f} MB")
-            if done != size or h.hexdigest() != expected_sha256:
+            if done < size:
+                headers = {"User-Agent": "HWDER-Setup"}
+                if done:
+                    headers["Range"] = f"bytes={done}-"
+                request = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(request, timeout=60) as reply:
+                    if done and reply.getcode() != 206:  # the server sent the whole file: start over
+                        done = before = 0
+                    started, first = time.monotonic(), done
+                    with open(part, "ab" if done else "wb") as out:
+                        while True:
+                            chunk = reply.read(1 << 20)
+                            if not chunk:
+                                break
+                            done += len(chunk)
+                            if done > size:
+                                out.close()
+                                part.unlink()
+                                report.end_progress()
+                                raise SetupError(f"{label}: the download is larger than expected")
+                            out.write(chunk)
+                            elapsed = time.monotonic() - started
+                            rate = (done - first) / elapsed if elapsed > 1 else 0
+                            text = f"{label}: {done / 1e6:.0f} of {size / 1e6:.0f} MB"
+                            if rate:
+                                text += f", {rate / 1e6:.1f} MB/s, {_duration((size - done) / rate)} left"
+                            report.progress(done / size, text)
+            if done != size:
+                raise OSError(f"the connection closed at {done / 1e6:.0f} of {size / 1e6:.0f} MB")
+            if file_sha256(part) != expected_sha256:
+                part.unlink()
+                report.end_progress()
                 raise SetupError(f"{label}: the download does not match its pinned SHA-256; it was not used")
+            os.replace(part, target)
             report.end_progress()
             return
+        except urllib.error.HTTPError as e:
+            if e.code == 416 and part.is_file():  # the range no longer fits the file on the server
+                part.unlink()
+            last_error = e
+            failures += 1
         except (OSError, urllib.error.URLError) as e:
             last_error = e
-    report.end_progress()
-    raise SetupError(f"Could not download {label} ({last_error}). Check the internet connection and try again.")
+            done = part.stat().st_size if part.is_file() else 0
+            failures = 0 if done > before else failures + 1
+        report.end_progress()
+    raise SetupError(f"Could not download {label} ({last_error}). Check the internet connection and run the "
+                     "script again: the download continues where it stopped.")
 
 
 def safe_extract_tar(archive, destination):

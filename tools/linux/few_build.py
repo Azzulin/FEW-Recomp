@@ -16,7 +16,8 @@ Where things go (all ignored by git):
     generated/                      the game's code translated to C
     build/linux/                    compiler output and build.log
     FireEmblemWarriors/             the game: few, its settings, saves, logs and shader caches
-Every step resumes: run it again after an interruption and only what is missing is redone.
+    build-linux.log                 everything the last run printed (for problem reports)
+Every step resumes, downloads included: run it again after an interruption and only what is missing is redone.
 """
 import argparse
 import hashlib
@@ -55,10 +56,31 @@ DECK_SETTINGS = {"fps60": "0", "fps60_1080p": "0", "fps30_720p": "1", "res_630p"
 COMMON_SETTINGS = {"version": "2", "face_labels": "1", "async_shaders": "1", "save_dir": "save"}
 
 report = linux_setup.Report()
+LOG = ROOT / "build-linux.log"  # everything a run prints, to attach to a problem report (ignored by git)
 
 
 class BuildError(Exception):
     pass
+
+
+class Tee:
+    """Shows what the build prints and copies it to LOG. Progress lines that redraw themselves ("\\r...") are only
+    shown: the log keeps the lines around them."""
+    def __init__(self, stream, log):
+        self.stream, self.log = stream, log
+
+    def write(self, text):
+        self.stream.write(text)
+        if not text.startswith("\r"):
+            self.log.write(text)
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+        self.log.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
 
 
 def step(text):
@@ -291,11 +313,10 @@ def unpack_update(python, env, update, keys):
         info("already unpacked")
         return out
     code = run([str(python), "-I", "-B", "-X", "utf8", "-c",
-                "import sys; sys.path.insert(0, sys.argv[1]); import game_update as g; g.unpack(*sys.argv[2:5])",
+                "import sys; sys.path.insert(0, sys.argv[1]); import game_update as g; sys.exit(g.main(sys.argv[2:5]))",
                 str(TOOLS), str(update), str(keys), str(out)], env)
     if code:
-        raise BuildError("Could not unpack the update. Check that it is update 1.5.0 and that prod.keys comes from "
-                         "the same console.")
+        raise BuildError("Could not unpack the update (the reason is on the 'update:' line above).")
     stamp.write_text(signature + "\n", encoding="utf-8")
     return out
 
@@ -432,6 +453,11 @@ def main(argv=None):
     march = a.march if a.march is not None else ("znver2" if deck else "")
     jobs = a.jobs or default_jobs()
     started = time.time()
+    if not a.tools_only:
+        log = open(LOG, "w", encoding="utf-8", errors="replace")
+        log.write(f"build-linux.sh {' '.join(argv if argv is not None else sys.argv[1:])} - "
+                  f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        sys.stdout, sys.stderr = Tee(sys.stdout, log), Tee(sys.stderr, log)
     try:
         step("Checking this computer")
         check_machine(out_dir)
@@ -467,6 +493,9 @@ def main(argv=None):
                 info("not added; you can run the script again with --steam later")
     except BuildError as e:
         print(f"\nERROR: {e}", file=sys.stderr, flush=True)
+        if not a.tools_only:
+            print(f"Everything shown here is also in {LOG}: attach that file if you report the problem.",
+                  file=sys.stderr, flush=True)
         return 1
     except KeyboardInterrupt:
         print("\nStopped. Run the script again to continue where it stopped.", file=sys.stderr)
