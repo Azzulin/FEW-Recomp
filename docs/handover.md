@@ -28,7 +28,7 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 | Issue | Estado | Próximo passo |
 |---|---|---|
 | #2 crash no menu Camp (Windows) | Corrigido em `5ac2be3` (TLS e handles das threads que terminam; ver "Crash da issue #2"). Em 27/11 comentado que está na v0.3.0, com pedido de teste (mais de 10 min, abrir o Camp) | Esperar o retorno; se fechar de novo, pedir o `hwder.log` |
-| #3 build no Deck demorado / "fail updated" | `6e4941e`; em 27/11 avisado que está na v0.3.0. Também em 27/11: avisado da v0.4.0 (build ~3x mais rápido, janela de progresso) e pedido o tempo do build no Deck | Esperar o tempo dele e se a janela abriu; se falhar, o `build-linux.log` |
+| #3 build no Deck demorado / "fail updated" | `6e4941e`; em 27/11 avisado que está na v0.3.0. Também em 27/11: avisado da v0.4.0 (build ~3x mais rápido, janela de progresso) e pedido o tempo do build no Deck; depois, da v0.5.0 (setup do Windows; no Deck, menos travadas na primeira vez). O usuário já compila e abriu a #4 (congela depois de 10–15 min no Deck), ainda sem resposta | Esperar o tempo dele e se a janela abriu; se falhar, o `build-linux.log` |
 | #1 versão japonesa | **Funciona** (testador, 27/11): os 10 símbolos achados por assinatura (`same code, moved in this build`), jogo em japonês a 60 fps. Relatou engasgos na compilação de shaders na primeira vez ("igual ao emulador") e pediu DualSense. Respondido em 27/11: engasgos diminuem com o cache (`pipeline_*.bin`); DualSense já é suportado pelo SDL3 (giroscópio, vibração), pedido o `hwder.log` se não funcionar | Ver se o DualSense dele funciona; os engasgos de primeira vez são a pendência "Engasgos de compilação" |
 
 ### Pendências, por ordem
