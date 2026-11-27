@@ -4,9 +4,60 @@ Vector registers are `V128` unions in c->v[]. Lane views:
   b/h/s/d (unsigned 8/16/32/64), sb/sh/ss/sd (signed), f (float), fd (double).
 Writes of 64-bit vectors (Q=0) and of scalars zero the remaining upper bits.
 """
+import functools
+import re
 import struct
 
 from .a64 import Unimplemented, bits, bit, sext, mask, hx, cond_expr, rd, wr, LD_FN, ST_FN
+
+
+# The emitters below write lane-wise operations as `for (int i = 0; i < N; i++) BODY` for readability. Clang must
+# turn each of those into straight-line code itself, and in the game's biggest functions (one has 5,356 such loops in
+# 21,000 lines) that is where almost all of the compile time went: LoopRotate and SROA run per loop over the whole
+# function (41% and 46% of a 6-minute compile, -ftime-report, 2026-11-27). Emitting the lanes already unrolled gives
+# the same machine code (.text -0.4%, same vector instruction count) in a third of the time: 186 -> 64 s with the
+# Windows Clang, 410 -> 168 s with Zig's (Linux, Steam Deck) for that file.
+_LANE_LOOP = re.compile(r"for \(int i = 0; i < (\d+); i\+\+\) ")
+_LANE_INDEX = re.compile(r"\bi\b")
+_LOOP_EXIT = re.compile(r"\b(break|continue|goto|return)\b|\bi\s*(\+\+|--|[-+*/%&|^]?=(?!=))")
+
+
+def unroll_lanes(code):
+    """`code` with each lane loop replaced by its lanes in order, i replaced by the lane number, each lane in a block of
+    its own (a body may declare variables). Raises on a body that changes i or leaves the loop."""
+    out, pos = [], 0
+    while True:
+        m = _LANE_LOOP.search(code, pos)
+        if not m:
+            out.append(code[pos:])
+            return "".join(out)
+        out.append(code[pos:m.start()])
+        count, start = int(m.group(1)), m.end()
+        depth, k = 0, start
+        if code[start] == "{":  # a block: up to its closing brace
+            while True:
+                depth += {"{": 1, "}": -1}.get(code[k], 0)
+                k += 1
+                if depth == 0:
+                    break
+            body, pos = code[start + 1:k - 1], k
+        else:  # one statement: up to the first ';' outside brackets
+            while not (code[k] == ";" and depth == 0):
+                depth += {"(": 1, ")": -1, "[": 1, "]": -1, "{": 1, "}": -1}.get(code[k], 0)
+                k += 1
+            body, pos = code[start:k + 1], k + 1
+        if _LANE_LOOP.search(body) or _LOOP_EXIT.search(body):  # a generator bug: stop the build, never trap later
+            raise RuntimeError(f"lane loop body not unrollable: {body.strip()}")
+        body = body.strip()
+        out.append("{ " + " ".join("{ " + _LANE_INDEX.sub(f"({lane})", body) + " }" for lane in range(count)) + " }")
+
+
+def _unrolled(emit):
+    @functools.wraps(emit)
+    def wrapper(*args, **kwargs):
+        code = emit(*args, **kwargs)
+        return unroll_lanes(code) if isinstance(code, str) else code
+    return wrapper
 
 U = {8: "b", 16: "h", 32: "s", 64: "d"}
 S = {8: "sb", 16: "sh", 32: "ss", 64: "sd"}
@@ -119,6 +170,7 @@ def crypto(w):
     return None
 
 
+@_unrolled
 def translate(w, pc):
     cr = crypto(w)
     if cr is not None:
@@ -972,6 +1024,7 @@ def adv_simd_scalar(w):
 
 # ====================================================================== structure loads/stores
 
+@_unrolled
 def ld_struct(w):
     q, l = bit(w, 30), bit(w, 22)
     post = bit(w, 23)

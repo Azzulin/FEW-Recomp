@@ -112,6 +112,20 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(
 else()
     message(FATAL_ERROR "Supported toolchains: Windows clang-cl; experimental Linux x86-64 Clang")
 endif()
+# Debug info in the game code: off unless asked for. Names in crash reports and stall stacks come from the symbol
+# table (f_<address>) and unwinding from the unwind tables, neither of which needs it; only offline line lookups
+# (tools/symbolize_samples.py) lose the line numbers, which mean little in generated C. It cost 9% of the compile
+# time with the Windows Clang and 16% with Zig's, which also adds -gdwarf-4 by itself unless told -s (2026-11-27).
+option(HW_GAME_DEBUG_INFO "Debug info (DWARF) in the generated game code: slower build, for developers" OFF)
+if(NOT HW_GAME_DEBUG_INFO AND NOT MSVC)
+    list(REMOVE_ITEM HW_GAME_FLAGS -g)
+    execute_process(COMMAND ${CMAKE_C_COMPILER} --version OUTPUT_VARIABLE HW_CC_VERSION ERROR_QUIET)
+    if(HW_CC_VERSION MATCHES "ziglang")
+        list(APPEND HW_GAME_FLAGS -s)
+    else()
+        list(APPEND HW_GAME_FLAGS -g0)
+    endif()
+endif()
 include("${GEN_DIR}/sources.cmake")
 
 
