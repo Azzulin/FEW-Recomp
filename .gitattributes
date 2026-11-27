@@ -4,3 +4,5 @@ tools/linux/hwder-setup text eol=lf
 *.ico binary
 # Embedded byte for byte in HWDER Setup.exe: one line ending on every checkout keeps the exe identical.
 tools/setup_ui/bootstrap.manifest text eol=lf
+# Pipeline catalogs (tools/pipeline_catalog): read byte for byte by the game, checked by their SHA-256.
+tools/pipeline_catalog/*.bin binary

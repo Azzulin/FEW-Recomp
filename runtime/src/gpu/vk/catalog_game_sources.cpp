@@ -6,6 +6,7 @@
 #include <set>
 #include <stdexcept>
 #include <cstdio>
+#include <cstdlib>
 
 namespace gpu::catalog {
 namespace {
@@ -16,7 +17,30 @@ constexpr const char* resources[] = {
     "data/action/shader/Normal.bin.gz", "data/deferred/DeferredShader.bin.gz",
     "data/shadow/ShadowShader.bin.gz", "data/stage/common/StageShader.bin.gz"
 };
-bool wanted(const std::string& name){for(auto r:resources)if(name==r)return true;return false;}
+// Fire Emblem Warriors keeps its shaders in nx/shader/*.spkg (81 uncompressed "SPKG" packages, 898 raw NVN programs
+// in the US 1.5.0 RomFS, measured 2026-11-27); the HWDE archives above do not exist there.
+bool in_dir(const std::string& name,const char* dir,const char* tail){
+    const size_t n=strlen(dir),k=strlen(tail);
+    return name.size()>n+k && name.compare(0,n,dir)==0 && name.find('/',n)==std::string::npos &&
+           name.compare(name.size()-k,k,tail)==0;
+}
+// Every RomFS file of the US 1.5.0 game that holds raw NVN programs, found by indexing them all (FEW_CATALOG_SCAN_ALL,
+// 2026-11-27: 1,378 programs in 6,858 files): the shader packages, each stage's terrain archive (its .gz name is not a
+// gzip stream) and the post-effect packages. Shaders still unresolved after this are in larger or compressed files.
+bool few_shader_package(const std::string& name){
+    return in_dir(name,"nx/shader/",".spkg") || in_dir(name,"nx/stage/terrain/","-Terrain.bin.gz") ||
+           in_dir(name,"nx/posteffect/",".kps") || in_dir(name,"nx/posteffect/",".kps3");
+}
+// FEW_CATALOG_SCAN_ALL=1 (investigation, not for players): index every RomFS file of up to 32 MB except movies, audio
+// and textures, to learn which files hold the shaders that nx/shader does not (a recording then names them).
+bool scan_all(){static const bool on=[]{const char* v=getenv("FEW_CATALOG_SCAN_ALL");return v && *v && strcmp(v,"0")!=0;}();return on;}
+bool ends_with(const std::string& s,const char* tail){const size_t n=strlen(tail);return s.size()>=n && s.compare(s.size()-n,n,tail)==0;}
+bool wanted(const std::string& name){
+    for(auto r:resources)if(name==r)return true;
+    if(few_shader_package(name))return true;
+    return scan_all() && !ends_with(name,".mp4") && !ends_with(name,".g1l") && !ends_with(name,".g1t");
+}
+constexpr u64 kScanAllMaxFile=32ull<<20;
 u32 word(const std::vector<u8>& b,u64 off){if(off>b.size() || b.size()-size_t(off)<4)throw std::runtime_error("RomFS word");u32 v;std::memcpy(&v,b.data()+off,4);return v;}
 u64 wide(const std::vector<u8>& b,u64 off){return u64(word(b,off))|(u64(word(b,off+4))<<32);}
 std::string name(const std::vector<u8>& b,u32 off,u32 header,u32 len){
@@ -57,7 +81,7 @@ bool GameSources::resource(const Resource& file,std::vector<u8>& out) const {
     }
     out=std::move(bytes);return true;
 }
-bool GameSources::index() {
+bool GameSources::index(bool scan_contents) {
     files_.clear();shaders_.clear();nsp_=hwfs::nsp::active();root_=hw_romfs_path();
     try {
         if(nsp_) {
@@ -78,7 +102,8 @@ bool GameSources::index() {
                     auto path_name=path+name(files,f,32,word(files,u64(f)+28));
                     u64 off=wide(files,u64(f)+8), count=wide(files,u64(f)+16);
                     if(data>size || off>size-data || count>size-data-off)throw std::runtime_error("RomFS file bounds");
-                    if(wanted(path_name))files_.push_back({path_name,data+off,count});
+                    if(wanted(path_name) && (count<=kScanAllMaxFile || !scan_all() || few_shader_package(path_name)))
+                        files_.push_back({path_name,data+off,count});
                     f=word(files,u64(f)+4);
                 }
                 u32 child=word(dirs,u64(d)+8);
@@ -91,6 +116,10 @@ bool GameSources::index() {
                 std::error_code error;u64 size=std::filesystem::file_size(path,error);if(!error)files_.push_back({r,0,size});
             }
         }
+        if(!scan_contents) {
+            hw_log("catalog: located %zu local game resources (contents read only when a program is prepared)",files_.size());
+            return !files_.empty();
+        }
         for(const auto& file:files_) {
             std::vector<u8> bytes;if(!resource(file,bytes))continue;
             size_t found=0;
@@ -100,10 +129,10 @@ bool GameSources::index() {
                 if(word(bytes,off)!=0x12345678)continue;
                 const u32 stage=(word(bytes,off+0x30)>>10)&15;u32 length=0;Digest hash{};
                 if(!source_identity(bytes.data()+off+0x30,bytes.size()-off-0x30,stage,length,hash))continue;
-                if(shaders_.size()>=16384)throw std::runtime_error("source count");
+                if(shaders_.size()>=(scan_all()?262144u:16384u))throw std::runtime_error("source count");
                 shaders_.push_back({file.name,u64(off+0x30),length,hash});++found;
             }
-            hw_log("catalog: local resource %s: %zu raw NVN programs (no code exported)",file.name.c_str(),found);
+            if(found || !scan_all())hw_log("catalog: local resource %s: %zu raw NVN programs (no code exported)",file.name.c_str(),found);
         }
         hw_log("catalog: indexed %zu local shader identities from %zu selected game resources",shaders_.size(),files_.size());
         return !shaders_.empty();

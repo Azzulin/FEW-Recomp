@@ -6,7 +6,6 @@
 #include "host/platform.h"
 #include "gpu/prelaunch.h"
 #include "fs/nsp.h"
-#include "hwder_version.h"
 #include "vk_renderer.h"
 #include "debug_flags.h"
 
@@ -23,9 +22,14 @@ static bool catalog_enabled() {
     return !value || strcmp(value,"0") != 0;
 }
 static u64 catalog_build() {
-    constexpr char epoch[] = "HWDER metadata pipeline catalog ABI 1";
-    u64 tag = hash_bytes(epoch,sizeof(epoch));
-    return hash_bytes(HWDER_COMMIT,sizeof(HWDER_COMMIT),tag);
+    // Not keyed by the build commit: the catalog ships with the game (tools/pipeline_catalog) and must outlive a
+    // release. It stays safe across builds for the same reason as the warmup recipes: catalog::prepare translates
+    // every program again and keeps it only when the result equals the recorded expected_translation, and each
+    // prepared pipeline still passes the live program/state check before use. A translator change only costs
+    // coverage (those programs are reported unresolved), never correctness. Bump the epoch when the format or the
+    // meaning of a field changes.
+    constexpr char epoch[] = "FEW metadata pipeline catalog ABI 2";
+    return hash_bytes(epoch,sizeof(epoch));
 }
 static u32 catalog_game_version() { return hwfs::nsp::active() && hwfs::nsp::info().has_version ? hwfs::nsp::info().version : 0; }
 static bool catalog_debug_translation() { return debug::flag(debug::ShaderNoKil) || debug::flag(debug::ShaderFallback); }
@@ -1048,7 +1052,7 @@ void prepare_pipeline_catalog() {
     catalog_recording = record && *record && strlen(record) <= 128 && !catalog_debug_translation();
     if (!catalog_recording && !catalog_deferred) return;
     prelaunch::preparation_frame("Finding graphics programs in your local game...");
-    catalog_sources.index();
+    catalog_sources.index(catalog_recording);  // using a catalog needs the file table only
     if (catalog_deferred) {
         catalog::Catalog cat;
         auto status = catalog::load(kCatalogFile, catalog_build(), catalog_game_version(), cat);
@@ -1064,6 +1068,14 @@ void prepare_pipeline_catalog() {
                     if (p.done == p.total)
                         hw_log("catalog: local translation: %u resolved, %u unresolved of %u", p.resolved, p.unresolved, p.total);
                 });
+            // The catalog was recorded on another GPU: its render-target formats become this GPU's (on AMD, the
+            // Steam Deck included, D24S8 depth is D32S8), so its pipelines are the ones this renderer will ask for.
+            u32 remapped = 0;
+            for (auto& recipe : cache.pipelines) {
+                const auto depth = (u32)vk::attachment_format_for_this_gpu((VkFormat)recipe.key.depth_format);
+                if (depth != recipe.key.depth_format) { recipe.key.depth_format = depth; ++remapped; }
+            }
+            if (remapped) hw_log("catalog: %u recipes moved to this GPU's depth format", remapped);
             if (!cache.pipelines.empty()) {
                 // A catalog is partial. Preserve compatible private successes,
                 // including programs whose catalog source could not be resolved.

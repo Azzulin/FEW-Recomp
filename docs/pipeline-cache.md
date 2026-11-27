@@ -1,5 +1,35 @@
 # Pipeline cache, warmup and catalog
 
+## No FEW (2026-11-27)
+
+O catálogo descrito abaixo é usado pelo FEW e vai com o jogo: `tools/pipeline_catalog/few-us-1.5.0.bin`, copiado como
+`pipeline_catalog.bin` para a pasta do jogo por `gerar-few.ps1`, `build-linux.sh` (`few_build.py`) e `gerar-deck.ps1`.
+Na primeira abertura o jogo prepara esses pipelines antes do primeiro quadro; o que não está no catálogo segue o
+caminho de sempre (compilado na hora e guardado no `pipeline_warmup.bin`). Estudo e medições:
+[estudo-shaders.md](estudo-shaders.md). Diferenças em relação ao protótipo do HWDER:
+
+- **Fontes:** `catalog_game_sources.cpp` (`few_shader_package()`) aceita os arquivos que têm programas NVN crus no
+  US 1.5.0, achados indexando a RomFS inteira com `FEW_CATALOG_SCAN_ALL=1` (investigação: todo arquivo de até
+  32 MB exceto vídeo, áudio e textura; 1.378 programas em 6.858 arquivos, 11 s): `nx/shader/*.spkg` (81 pacotes sem
+  compressão, 898 programas), `nx/stage/terrain/*-Terrain.bin.gz` (19 terrenos de fase, 447; o `.gz` não é gzip) e
+  `nx/posteffect/*.kps`/`.kps3` (33). Lidos através do patch do update 1.5.0.
+- **Abertura:** usar um catálogo só precisa da tabela de arquivos (`index(false)`): cada programa é lido no
+  deslocamento gravado e conferido pelo SHA-256. Ler e varrer o conteúdo dos arquivos só acontece ao gravar.
+- **Compatibilidade:** `catalog_build()` é uma época de ABI, não mais o commit: o catálogo vale entre releases. Cada
+  programa é traduzido de novo e só entra se o resultado for igual ao gravado (`expected_translation`); mudar o
+  tradutor custa cobertura, nunca correção. Mude a época se o formato ou o sentido de um campo mudar.
+- **Outra GPU:** as chaves guardam o formato Vulkan do render target. Na importação, `attachment_format_for_this_gpu()`
+  troca D24S8 por D32S8 onde a GPU não tem D24S8 (AMD, Steam Deck). Grave em NVIDIA ou Intel (que têm D24S8).
+- **Gravar e somar:** cada rodada com `HWDER_PIPELINE_CATALOG_RECORD=<escopo>` substitui o `pipeline_catalog.bin` da
+  pasta (sem um catálogo lá, para não importar). Some as rodadas com
+  `python tools/pipeline_catalog/catalog.py merge tools/pipeline_catalog/few-us-1.5.0.bin <atual> <novas>...` e veja o
+  conteúdo com `... catalog.py info <arquivo>`. Limites do formato: 512 programas e 8.192 pipelines.
+- **Lacuna conhecida:** alguns shaders da batalha do prólogo ainda não estão em nenhum desses arquivos (`stage …
+  unresolved in supported local resources` no log da gravação): devem estar em arquivos maiores que 32 MB ou
+  comprimidos. Esses continuam compilando na primeira vez.
+
+## Original HWDER notes
+
 How HWDER keeps compiled graphics pipelines between runs. For what a player sees (hitches in the first
 minutes on a fresh install) see [Playing HWDER](playing.md#the-first-minutes-on-a-fresh-install-can-hitch).
 

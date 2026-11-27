@@ -54,7 +54,7 @@ endif()
 
 set(CATALOG_TRANSLATOR_SOURCES
     runtime/src/shader/decode.cpp runtime/src/shader/fallback.cpp
-    runtime/src/shader/translate.cpp runtime/src/shader/program.cpp
+    runtime/src/shader/translate.cpp runtime/src/shader/structurize.cpp runtime/src/shader/program.cpp
     runtime/src/shader/emit_alu.cpp runtime/src/shader/emit_mem.cpp
     runtime/src/debug_flags.cpp)  # translate.cpp reads HWDER_SHADER_* through the table
 add_executable(pipeline_catalog_test EXCLUDE_FROM_ALL

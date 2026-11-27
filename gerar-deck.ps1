@@ -93,6 +93,9 @@ Get-ChildItem -LiteralPath $upd -Recurse -File | ForEach-Object {
     Link (Join-Path "$out\update" $rel) $_.FullName
 }
 Copy-Item -LiteralPath (Join-Path $root 'tools\steam_shortcut.py'), (Join-Path $root 'tools\game_profile.py') -Destination "$out\tools" -Force
+# Catálogo de pipelines (tools\pipeline_catalog): gráficos preparados antes do primeiro quadro. Só metadados.
+$catalog = Join-Path $root 'tools\pipeline_catalog\few-us-1.5.0.bin'
+if (Test-Path -LiteralPath $catalog) { Copy-Item -LiteralPath $catalog -Destination "$out\pipeline_catalog.bin" -Force }
 
 # 3. ajustes do Deck: caminhos relativos à pasta do jogo (o few entra nela ao iniciar).
 #    A escala de resolução fica em 1x neste jogo (texture_cache.cpp), então não entra aqui.

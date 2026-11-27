@@ -470,6 +470,11 @@ def publish(exe, out_dir, base, keys, update_dir, deck):
     launcher = out_dir / "few-steam.sh"
     launcher.write_text(LAUNCHER, encoding="utf-8")
     os.chmod(launcher, 0o755)
+    # The pipeline catalog (tools/pipeline_catalog): with it the game prepares, before its first frame, the graphics
+    # it would otherwise compile in the middle of a battle. Metadata only; the code comes from the player's game.
+    catalog = TOOLS / "pipeline_catalog" / "few-us-1.5.0.bin"
+    if catalog.is_file():
+        shutil.copyfile(catalog, out_dir / "pipeline_catalog.bin")
     if deck and not (out_dir / "hwder_env.txt").exists():
         (out_dir / "hwder_env.txt").write_text(DECK_ENV, encoding="utf-8")
     defaults = dict(COMMON_SETTINGS, **(DECK_SETTINGS if deck else {}))

@@ -101,6 +101,8 @@ FormatInfo make(VkFormat f, u8 bpb, u8 bw = 1, u8 bh = 1) {
 }
 }  // namespace
 
+VkFormat attachment_format_for_this_gpu(VkFormat f) { return host_depth_format(f); }
+
 bool vk_format_compressed(VkFormat f) {
     return (f >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && f <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK);
 }

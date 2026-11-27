@@ -83,6 +83,9 @@ FormatInfo android_format(u32 pixel_format);
 VkFormat vertex_format(u32 attrib, u32* size_bytes);
 u32 vk_format_bytes(VkFormat f);  // host bytes per texel (uncompressed) or per block
 bool vk_format_compressed(VkFormat f);
+// A render-target format recorded on another GPU, as this GPU's renderer would use it (D24S8 becomes D32S8 where
+// D24S8 is unsupported, as on AMD): pipeline catalogs are recorded on one GPU and used on all of them.
+VkFormat attachment_format_for_this_gpu(VkFormat f);
 VkFormatFeatureFlags format_features(VkFormat f);  // optimal tiling, cached
 void decode_astc(const u8* src, u32 width, u32 height, u32 depth, u32 bw, u32 bh, u8* dst_rgba8);
 
