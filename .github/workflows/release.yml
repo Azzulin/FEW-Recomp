@@ -64,6 +64,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           python tools/release_notes.py $env:VERSION > dist/notes.md
           if ($LASTEXITCODE) { if ($env:MAKE_RELEASE -eq 'true') { exit 1 } else { 'Dry run: no changelog section for this version.' | Set-Content dist/notes.md } }
+          exit 0  # GitHub's PowerShell otherwise ends the step with python's exit code
 
       - name: Cache the pinned build tools
         if: env.SKIP != 'true'
