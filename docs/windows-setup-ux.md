@@ -2,7 +2,8 @@
 
 > [!NOTE]
 > Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
-> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+> port does not use. FEW has its own setup, `FEW Recomp Setup.exe` (`tools/build_ui/setup.cpp`), which follows the
+> same one-button idea: see [GUIDE.md](../GUIDE.md#4-windows).
 
 Design note for the R5 setup UX, 2026-10-21. It replaces the R4 button row
 (Check requirements / Install private tools / Prepare game / Play / shortcut /

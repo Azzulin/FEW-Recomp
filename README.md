@@ -17,22 +17,23 @@ audio, video, file system). No emulator, no JIT.
 
 ### How to play
 
-1. Download the source from the latest [release](https://github.com/Azzulin/FEW-Recomp/releases) (or
-   `git clone` this repository) and extract it.
-2. Create a `Game Files` folder inside it with your NSPs — base `[0100F15003E64000]`, update 1.5.0
-   `[0100F15003E64800]`, DLCs — and your `prod.keys`. The Japanese release (`[0100EAE003A5A000]`, update
-   `[0100EAE003A5A800]`) is also accepted: a player reports it running in Japanese at 60 fps.
-3. Build with one command:
+You need your NSPs — base `[0100F15003E64000]`, update 1.5.0 `[0100F15003E64800]`, DLCs (optional) — and your
+`prod.keys`. The Japanese release (`[0100EAE003A5A000]`, update `[0100EAE003A5A800]`) is also accepted: a player
+reports it running in Japanese at 60 fps.
 
-   | On | Run (in a terminal in the source folder) | The game ends up in |
-   |---|---|---|
-   | **Steam Deck / Linux** | `bash build-linux.sh` | `FireEmblemWarriors/` + a Steam shortcut |
-   | **Windows** | `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` | `Jogar no PC\few.exe` |
+**Windows:** download **`FEW-Recomp-<version>-Windows-x64.zip`** from the latest
+[release](https://github.com/Azzulin/FEW-Recomp/releases), extract it and open **FEW Recomp Setup.exe**. Pick the
+folder with your files (it finds the base, the update, the DLCs and the keys by themselves), press **Build the game**,
+then **Play**.
 
-   Nothing is installed on the system and no admin/`sudo` is needed: pinned build tools are downloaded once and
-   checked by SHA-256. The first build takes about 20–45 minutes on a desktop PC and longer on a Steam Deck; a
-   window shows its steps, progress and time left, with a **Play** button at the end. It resumes if interrupted, and
-   later updates only rebuild what changed.
+**Steam Deck / Linux:** download `FEW-Recomp-<version>-Linux-x64.tar.gz`, put your files in a `Game Files` folder
+inside it and double-click `build-linux.sh` (choose *Execute*), or run `bash build-linux.sh`. The game ends up in
+`FireEmblemWarriors/` with a Steam shortcut.
+
+Nothing is installed on the system and no admin/`sudo` is needed: pinned build tools are downloaded once and checked
+by SHA-256. The first build takes about 20–45 minutes on a desktop PC and longer on a Steam Deck; a window shows its
+steps, progress and time left, with a **Play** button at the end. It resumes if interrupted, and later updates only
+rebuild what changed.
 
 **Step-by-step guide, including a Steam Deck walkthrough for people who never used Desktop Mode:
 [GUIDE.md](GUIDE.md).** It also covers building the Deck version on a Windows PC, settings, saves, updating and
@@ -107,10 +108,11 @@ a japonesa (vendida também na Ásia) é aceita e um jogador a relata rodando em
 uns 20–45 minutos num PC de mesa (mais no Steam Deck), com uma janela que mostra as etapas, o progresso e o tempo
 restante.
 
-Para jogar: baixe o código da última release (ou clone), crie `Game Files` com os NSPs e o `prod.keys` e rode
-`bash build-linux.sh` (Steam Deck e Linux: o jogo fica em `FireEmblemWarriors/` e ganha atalho na Steam) ou
-`powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` (Windows: `Jogar no PC\few.exe`). Passo a passo,
-inclusive para o Steam Deck, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
+Para jogar no **Windows**: baixe o `FEW-Recomp-<versão>-Windows-x64.zip` da última release, extraia e abra o
+**FEW Recomp Setup.exe**; escolha a pasta com os seus arquivos (ele acha a base, o update, as DLCs e as chaves), clique
+em **Build the game** e depois em **Play**. No **Steam Deck e Linux**: baixe o `FEW-Recomp-<versão>-Linux-x64.tar.gz`,
+crie `Game Files` com os NSPs e o `prod.keys` e rode `build-linux.sh` (o jogo fica em `FireEmblemWarriors/` e ganha
+atalho na Steam). Passo a passo, ajustes e problemas comuns: [GUIDE.md](GUIDE.md) (em inglês).
 
 **Foco do projeto:** desempenho estável sem forçar o Steam Deck e sem cortar efeitos do jogo. No Deck: o ritmo
 nativo (batalhas a 30 fps) a 1280×720, com as partículas da GPU. Para isso, o trabalho foi reduzir o que se faz por

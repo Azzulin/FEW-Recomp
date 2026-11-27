@@ -13,7 +13,10 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 - **Release v0.3.0** (2026-11-27, release normal, tag `v0.3.0`): tudo acima, com os assets
   `FEW-Recomp-v0.3.0-Windows-x64.zip` e `FEW-Recomp-v0.3.0-Linux-x64.tar.gz` para o RecompLauncher. v0.1.0 e v0.2.0
   continuam como pré-release.
-- **Release v0.4.0** (2026-11-27, release normal, a mais recente): build ~3x mais rápido e janela de progresso
+- **Release v0.5.0** (2026-11-27, a mais recente): `FEW Recomp Setup.exe` no zip do Windows, catálogo de pipelines
+  (shaders prontos antes de jogar), `aoc_dir`. A **primeira feita pelo workflow Release** do GitHub Actions
+  ([releasing.md](releasing.md)); as anteriores foram empacotadas à mão.
+- **Release v0.4.0** (2026-11-27, release normal): build ~3x mais rápido e janela de progresso
   (seção "Build 3x mais rápido e janela de progresso"), com os mesmos dois assets e `SHA256SUMS`. Publicada **sem
   teste no Deck** (o dono não tem como testar agora): o tempo no Deck foi pedido ao usuário da #3.
 - A cópia local `Downloads\FEW-Recomp-main` é um zip extraído, **sem git**; batia com a `main` depois desse push.
@@ -36,10 +39,9 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
    "Testado e pendente"). A seção Developers do launcher só aparece com conta de desenvolvedor verificado ou com
    uma build local já adicionada; sem conta, use o modo de teste (mesmo documento). Pacotes de teste em
    `Downloads\FEW-Recomp-launcher-test` (`v0.3.0-rc1`; o zip do Windows extraído em `windows\`).
-2. **Próxima release**: abrir de novo uma seção "Unreleased" no `CHANGELOG.md` para o que vier; publicar como a
-   v0.4.0 (tag, `package.py` num checkout limpo, os dois arquivos de `dist/` e o `SHA256SUMS` como release normal).
-   Passo a passo em [docs/recomplauncher.md](recomplauncher.md). Cada release faz o launcher recompilar o jogo de
-   quem já tem.
+2. **Próxima release: pelo GitHub Actions**, [docs/releasing.md](releasing.md) (seção no CHANGELOG, *Actions >
+   Release > Run workflow*, conferir o rascunho, publicar). Cada release faz o launcher recompilar o jogo de quem
+   já tem.
 3. **Catálogo do RecompLauncher**: conta de desenvolvedor pedida pelo dono em 2026-11-27, esperando a aprovação
    manual. Depois, envio em
    `recomplauncher.com/submit?platform=pc`. Conferir se o launcher aceita só o tarball no Linux (o guia pede também
@@ -47,8 +49,12 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 4. **Responder à #2** depois da validação; na #1, acompanhar o teste do usuário japonês.
 5. **Build 3x mais rápido e janela de progresso** (seção abaixo): na **v0.4.0**. Falta o número real no Deck (tempo
    do build e se a janela abre no Modo Desktop): pedido ao usuário da #3; o dono não tem como testar agora.
-6. **Pré-compilar shaders** para reduzir os engasgos da primeira vez: estudo pedido pelo dono em 2026-11-27 (ver
-   "Estudo: shaders antes de jogar", quando existir).
+6. **Shaders prontos antes de jogar** (fase 1 feita em 2026-11-27, [docs/estudo-shaders.md](estudo-shaders.md),
+   "Implementado"): catálogo `tools/pipeline_catalog/few-us-1.5.0.bin` versionado (o dono aprovou), copiado para a
+   pasta do jogo pelos três scripts; na batalha do prólogo, sem cache, 0 travadas e 24 efeitos atrasados (eram 561).
+   Próximos: gravar mais rotas (somar com `tools/pipeline_catalog/catalog.py merge`), os 35 shaders ainda não
+   achados, testar no Deck, preparo paralelo. Ao mudar o tradutor de shaders, gravar de novo: programas cuja tradução
+   mudou deixam de valer (o log da abertura diz quantos: `catalog: local translation: N resolved, M unresolved`).
 
 ### Armadilhas desta sessão
 
@@ -63,6 +69,36 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
   de 260 caracteres de caminho (medido). Detalhes em [docs/recomplauncher.md](recomplauncher.md).
 - Teste de ponta a ponta: rodar o `few-prepare.bat` direto, sem `cmd /c`, que remove as aspas de caminhos com espaço.
   O teste do Linux roda no WSL `archlinux`, em `/tmp`. Limpe `%TEMP%\fewt` e `/tmp/few-e2e` no fim.
+
+## FEW Recomp Setup e publicação pelo GitHub Actions (2026-11-27)
+
+Pedido do dono: o build pelas instruções estava difícil; queria no Windows uma tela como a do Setup do HWDER (escolher
+NSPs, DLCs e update) e um processo de versão que ele mesmo consiga rodar.
+
+- **`FEW Recomp Setup.exe`** = `tools/build_ui` sem `--events` no Windows (`setup.cpp`; o visual e a tela de progresso
+  vêm do `ui.h`, compartilhado com a janela de progresso, que segue servindo ao `build-linux.sh`). Um botão principal:
+  arquivos → **Build the game** → progresso (Cancel) → **Play** / **Desktop shortcut** / **Open game folder**.
+  - Reconhece cada NSP pelo ID do título do ticket (`<rights id>.tik` na tabela PFS0, que não é criptografada), senão
+    pelo `[0100…]` do nome. "Choose a folder with all of them" acha base, update, DLCs e `prod.keys` (na pasta, uma
+    acima, `%USERPROFILE%\.switch` ou ao lado do kit). Escolhas em `%LOCALAPPDATA%\FEW-Recomp\setup.ini` (vale entre
+    versões); build concluído em `build\setup-built.ini` (versão + caminhos): abrir de novo cai direto em Play.
+  - Roda `powershell gerar-few.ps1 -NoUi -BaseNsp -UpdateNsp -Keys [-DlcDir]` com `FEW_EVENTS` apontando para
+    `build\build-events.jsonl` (o `gerar-few.ps1` grava nele sem abrir outra janela), num *job object* (Cancel e
+    fechar a janela matam tudo), saída em `build\setup-build.log`. PowerShell **minimizado e visível**, nunca oculto.
+  - Ícone próprio (`make_icon.py` → `few.ico`, o mesmo brasão), manifesto `asInvoker`, informações de versão,
+    `-Wl,--no-insert-timestamp`: as práticas do HWDER contra falso positivo de antivírus (`docs/antivirus.md`).
+  - Testes: `FEW_SETUP_FOLDER=<pasta>` (como escolher a pasta), `FEW_SETUP_AUTOBUILD=1` (aperta Build) e
+    `FEW_BUILD_UI_SCREENSHOT=<bmp>` (espera o build terminar). De ponta a ponta no Windows em 2026-11-27: a pasta do
+    dump detectada (base e update US, 5 DLCs), build pelo setup em 163 s (incremental) e tela de pronto.
+- **DLCs em outra pasta:** chave `aoc_dir` no `hwder_settings.ini` (UTF-8; o `core.cpp` a passa como
+  `HWDER_AOC_DIR` antes do NSP). `gerar-few.ps1 -DlcDir` grava; vazio = pasta da base.
+- **Publicação** ([releasing.md](releasing.md)): `.github/workflows/release.yml` (Windows 2022) instala o toolchain
+  fixado (cache), baixa as bibliotecas fixadas (`tools/fetch_deps.py`, agora nos commits do `gerar-few.ps1`), compila
+  o setup, empacota (`package.py --setup-exe`, que também grava o `SHA256SUMS`), gera as notas do CHANGELOG
+  (`tools/release_notes.py`) e cria a release **em rascunho**. `ci.yml` roda os testes a cada push. Pelo site:
+  *Actions > Release > Run workflow* com a versão e "release" marcado.
+- **Falta:** o primeiro rodar real do workflow no GitHub (um ensaio sem release antes da primeira versão por ele) e o
+  setup numa máquina limpa (SmartScreen, download do toolchain do zero).
 
 ## Build 3x mais rápido e janela de progresso (2026-11-27, release v0.4.0)
 

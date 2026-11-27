@@ -13,7 +13,7 @@ your dump.
 
 | I want to play on… | Do this |
 |---|---|
-| a Windows PC | [1](#1-what-you-need) → [2](#2-get-the-source) → [3](#3-put-your-game-files-in-place) → [4](#4-windows) |
+| a Windows PC | [1](#1-what-you-need) → [4](#4-windows) (**FEW Recomp Setup**: pick your files, press Build, play) |
 | a Steam Deck, building on the Deck itself (no other computer needed) | [1](#1-what-you-need) → [5A](#5a-steam-deck-step-by-step) |
 | a Linux PC (Bazzite, Arch, Fedora, Ubuntu, …) | [1](#1-what-you-need) → [2](#2-get-the-source) → [3](#3-put-your-game-files-in-place) → [5B](#5b-linux-pc) |
 | a Steam Deck, building on a Windows PC (faster) | [4](#4-windows) first, then [5C](#5c-steam-deck-built-on-a-windows-pc) |
@@ -40,9 +40,9 @@ Asia) is accepted and **reported working by a player** (in Japanese, at 60 fps);
 code is identical to the tested US one. Please report how it runs. Other releases and other update versions are not
 supported. `.nsz`/`.xci` files are not accepted: use `.nsp`.
 
-**Windows PC:** Windows 10/11 x64, [Git](https://git-scm.com/download/win), [Python 3](https://www.python.org/downloads/windows/)
-(tick *Add python.exe to PATH* in the installer), about 5 GB free plus your NSPs (~19 GB with all DLCs), and a GPU
-with a Vulkan 1.2+ driver. First build: roughly 20–45 minutes.
+**Windows PC:** Windows 10/11 x64, about 5 GB free plus your NSPs (~19 GB with all DLCs), a GPU with a Vulkan 1.2+
+driver, and internet the first time (about 1 GB of build tools, downloaded once and checked by SHA-256). Nothing else:
+no Git, Python or Visual Studio, and no administrator rights. First build: roughly 20–45 minutes.
 
 **Linux PC or Steam Deck:** an x86-64 CPU with AVX2, a Vulkan GPU driver (Mesa RADV, NVIDIA, Intel), `python3`
 (already on SteamOS, Bazzite, Fedora, Ubuntu and Arch), about **8 GB free on a Linux drive** (internal storage, or an
@@ -53,8 +53,10 @@ Steam Deck and less on a desktop PC; later updates only redo what changed.
 
 ## 2. Get the source
 
-Download **Source code (zip)** (or `.tar.gz`) from the [Releases](https://github.com/Azzulin/FEW-Recomp/releases)
-page and extract it, or clone it:
+On **Windows**, download **`FEW-Recomp-<version>-Windows-x64.zip`** from the
+[Releases](https://github.com/Azzulin/FEW-Recomp/releases) page: it has the source and **FEW Recomp Setup.exe** (see
+[section 4](#4-windows)). On **Linux and the Steam Deck**, download `FEW-Recomp-<version>-Linux-x64.tar.gz` (or
+*Source code*). Developers can clone it:
 
 ```bash
 git clone https://github.com/Azzulin/FEW-Recomp.git
@@ -65,7 +67,8 @@ Windows: extract to a short path such as `C:\Games\FEW-Recomp`. Linux: anywhere 
 
 ## 3. Put your game files in place
 
-Create a folder named **`Game Files`** inside the source folder and put your NSPs and keys there:
+With **FEW Recomp Setup** on Windows you can skip this: it lets you pick the files wherever they are. For the scripts,
+create a folder named **`Game Files`** inside the source folder and put your NSPs and keys there:
 
 ```
 FEW-Recomp/
@@ -83,6 +86,27 @@ Your NSPs and keys are read where they are, never copied or uploaded. On Linux t
 
 ## 4. Windows
 
+### FEW Recomp Setup (the easy way)
+
+1. Extract **`FEW-Recomp-<version>-Windows-x64.zip`** into a new folder with a short path, for example
+   `C:\Games\FEW-Recomp`, and open **FEW Recomp Setup.exe** in it. Windows may say *Windows protected your PC*,
+   because the program is not signed: *More info → Run anyway*.
+2. **Your game files:** press **Choose a folder with all of them…** and pick the folder with your NSPs. The setup
+   recognises the base game, update 1.5.0 and the DLCs by their title IDs (whatever the file names), and finds your
+   `prod.keys` there, one folder up or in `%USERPROFILE%\.switch`. Or pick each one with **Browse…**. Each line turns
+   green when the file is right, and says what is wrong when it is not.
+3. Press **Build the game**. The window shows the steps, a progress bar and about how long is left; the work is done
+   by PowerShell, minimized in the taskbar (leave it open). The first build downloads its tools once and takes about
+   20–45 minutes. **Cancel** stops it; building again continues where it stopped.
+4. **Play**, or **Desktop shortcut** to start it from the desktop next time. Opening the setup again goes straight to
+   Play; **Change files or build again** after a new version or other files.
+
+Your choices are remembered (`%LOCALAPPDATA%\FEW-Recomp\setup.ini`, paths only); the files are never copied or sent
+anywhere. The game ends up in **`Jogar no PC\few.exe`** ("Play on PC") inside the folder. If a build stops, the setup
+shows the reason and **Open the build log** (`build\setup-build.log`): attach that file to a report.
+
+### By hand (PowerShell)
+
 Open **PowerShell** in the source folder (in Explorer: *File → Open Windows PowerShell*, or type `powershell` in the
 address bar) and run:
 
@@ -94,16 +118,15 @@ powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch
 
 The script checks your files, fetches four pinned libraries, installs its private build tools (Python 3.13,
 LLVM-MinGW, CMake, Ninja; no admin, no Visual Studio, into `%LOCALAPPDATA%\HWDER`), unpacks update 1.5.0, translates
-the game's ARM64 code to C, compiles it and publishes **`Jogar no PC\few.exe`** ("Play on PC"). If it stops halfway,
-run it again: it resumes. Play with `Jogar no PC\few.exe` — make a shortcut or add it to Steam as a non-Steam game.
-
-Before compiling, a **build window** opens next to PowerShell: the steps, a progress bar, how many files are done and
-about how long is left, and a **Play** button at the end. It only shows the progress: closing it does not stop the
-build, and PowerShell keeps every detail. `-NoUi` builds without it.
+the game's ARM64 code to C, compiles it and publishes **`Jogar no PC\few.exe`**. If it stops halfway, run it again:
+it resumes. Before compiling, a **build window** opens next to PowerShell with the progress and, at the end, a
+**Play** button; closing it does not stop the build.
 
 | Option | What it does |
 |---|---|
 | `-Jogo D:\Switch\FEW` | read the NSPs from another folder |
+| `-BaseNsp …` `-UpdateNsp …` `-Keys …` | the files themselves, any names (what the setup passes) |
+| `-DlcDir D:\Switch\DLC` | DLCs from another folder (default: the base game's folder) |
 | `-Keys D:\keys\prod.keys` | keys from another place |
 | `-Jobs 4` | fewer parallel compiles (less RAM) |
 | `-SoBuild` | only recompile (skip unpacking and translating) |
@@ -248,7 +271,7 @@ The game keeps everything in its own folder — `Jogar no PC\` on Windows, `Fire
 | Saves | `save/` — back this folder up |
 | Settings | `hwder_settings.ini` (also changed from the **F1** menu) |
 | Log | `hwder.log` |
-| Shader caches | `pipeline_cache.bin`, `pipeline_warmup.bin` (stutter goes down as they fill up) |
+| Shader caches | `pipeline_cache.bin`, `pipeline_warmup.bin` (stutter goes down as they fill up); `pipeline_catalog.bin` lists the graphics the game prepares before its first frame (only references into your game files, no game data) |
 
 In game:
 
@@ -315,7 +338,7 @@ Deck; it keeps its own settings and saves.
 
 | Symptom | What to do |
 |---|---|
-| Stutter in the first minutes or in new scenes | Shaders compiling; it improves as the caches fill up |
+| Stutter in the first minutes or in new scenes | Shaders compiling the first time a scene or effect is seen; it goes away as the caches fill up. The opening and the prologue battle are prepared before the first frame (the first start takes a few seconds longer) |
 | Black screen or crash at start | Update the GPU driver; read `hwder.log` |
 
 ## 9. Reporting a problem

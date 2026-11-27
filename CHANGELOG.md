@@ -1,5 +1,23 @@
 # Changelog
 
+## FEW Recomp v0.5.0 (2026-11-27)
+
+- **FEW Recomp Setup for Windows.** The Windows download now has a setup program: open **FEW Recomp Setup.exe**, pick
+  the folder with your files (it recognises the base game, update 1.5.0, the DLCs and your `prod.keys` by
+  themselves, whatever the file names, and says what is missing or wrong), press **Build the game**, then **Play**
+  or **Desktop shortcut**. It shows the steps, the progress and the time left, can cancel, and remembers your files
+  for the next version. No command line, Git or Python needed, and no administrator rights; your files are read
+  where they are, never copied.
+- DLCs can be in another folder than the base game (`aoc_dir` in `hwder_settings.ini`, set by the setup, or
+  `gerar-few.ps1 -DlcDir`).
+- **Fewer hitches the first time you play.** The first time an effect appears, its graphics have to be prepared, and
+  the game froze for a moment while that happened. The game now prepares the graphics of the opening and the prologue
+  battle before its first frame, from a list that ships with it (`pipeline_catalog.bin` in the game folder). The list
+  holds only references into your own game files (shader packages, stage terrains, post-effects), which the game
+  checks before using them. In the prologue battle, with nothing prepared beforehand: 5 freezes down to none, and
+  effects that popped in late from 561 to 24. The first start takes a few seconds longer; parts of the game not on
+  the list still prepare their graphics the first time, as before, and the list will grow.
+
 ## FEW Recomp v0.4.0 (2026-11-27)
 
 - **The build is about three times faster.** The game's code is now translated with its vector operations already
