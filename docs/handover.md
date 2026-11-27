@@ -87,6 +87,32 @@ Build no Linux:
 - Se o código japonês for diferente, `few_build.merge_found_entries`/`gerar-few.ps1` juntariam endereços descobertos
   nele à lista dos EUA; resolver só se isso acontecer.
 
+**2026-11-27: o `main` japonês é outro build.** Pelas capturas do testador: `update: JP release`, `code differs …`,
+os outros 4 módulos com as mesmas faixas de texto do US, `main` com 20585 funções (US: 20587) e texto até
+`0x1000c06fe8` (US: `…c07540`). A geração parava em `symbols.txt: Display_SetMode 0x10008b7f1c is not a recompiled
+function start`. Correção (sem dump japonês para testar):
+
+- `tools/recomp/symbol_sigs.py` + `tools/recomp/symbols.sig`: para cada símbolo do `symbols.txt`, o tamanho da função
+  que o contém, o deslocamento nela, CRC-32 das 4 primeiras instruções e SHA-256 do corpo com campos relativos ao PC
+  e deslocamentos de ADRP mascarados (`remap_symbols.normalize`), e quantas vezes esse corpo aparece no módulo. Só
+  hashes e tamanhos, nenhum byte do jogo (`test_signatures_hold_no_code`). Dado é achado pela n-ésima referência ADRP
+  de uma função de corpo único, mais um deslocamento curto (`g_PresentInterval` = ref − 4, `g_FrameRate` = ref − 0xc).
+- `gen_main` confere cada símbolo no endereço dos EUA (instantâneo) e, se o código não estiver lá, procura no módulo
+  (~2 s no `main`) e imprime `symbols: <nome> <US> -> <novo> (same code, moved in this build)`. Não achou, ou o corpo
+  aparece um número de vezes diferente do US: `symbols: WARNING: … left out`, e o gancho sai junto.
+  `few_display_mode.cpp` só define cada gancho com `#ifdef HW_ADDR_<nome>`.
+- `read_symbols` mudou do `gen_main` para o `symbol_sigs` (o teste roda sem `lz4`; `remap_symbols` importa o `lz4` só
+  dentro de `image()`).
+- Testado: `main` US gera a mesma saída de antes, byte a byte; `main` US com uma página inserida: 10 símbolos
+  andaram +0x1000 e o que vinha antes ficou; função corrompida: gancho fora com aviso; `few_display_mode.cpp`
+  compila com e sem os símbolos (g++ no WSL); `tools/tests/test_symbol_sigs.py` (6 testes, sintéticos).
+- **Ao mudar o `symbols.txt`, regerar o `symbols.sig`** (comando no cabeçalho do `symbols.txt`); o teste
+  `test_every_symbol_has_a_signature_at_its_address` falha se esquecer. O ExeFS US extraído está em `data/update` e a
+  tabela do `main` US em `data/gen_us_main/functable.c` (ignorados). Python com `lz4`: um venv com `lz4` e
+  `cryptography` basta; o Python do sistema não tem.
+- Se o teste japonês mostrar outro problema de endereço, o próximo suspeito é `tools/recomp/extra_entries.txt`
+  (uma entrada no `subsdk0`, que tem a mesma faixa de texto nas duas regiões).
+
 ## Issue #3: build no Steam Deck (2026-11-26, falta testar num Deck)
 
 Relato: o download "não acaba" e no fim aparece algo como "fail updated"; pede um jeito de instalar sem Konsole.

@@ -18,14 +18,13 @@ import re
 import struct
 from pathlib import Path
 
-import lz4.block
-
 MAIN = 0x1000000000
 HERE = Path(__file__).resolve().parent
 
 
 def image(nso):
     """Mapped image of an NSO (text, rodata, data) and the end of its text."""
+    import lz4.block  # here, so symbol_sigs can use normalize() and data_refs() without it
     flags = struct.unpack_from("<I", nso, 0xC)[0]
     segs = []
     for i in range(3):

@@ -121,5 +121,13 @@ O primeiro dump era o japonês `0100EAE003A5A000` v0: mesmos 8 módulos da base 
 update `0100EAE003A5A800` v327680 (o mesmo 1.5.0), DLCs `0100EAE003A5B001`…`B005`. A região sai do ticket do
 update (`game_update.py`, `region` no `update.json`); o `gen_main.py` grava `HW_GAME_REGION` no
 `generated/sources.cmake` e o CMake define `HW_GAME_REGION_JP` só no executável (`game_profile.h`: IDs e idioma
-`ja`). Não se sabe se o ExeFS do update japonês é igual ao do US: o `game_update.py` compara os módulos com
-`supported_games.json` e imprime `update: code identical…` ou `…differs…`. Peça essa linha a quem testar.
+`ja`). O `game_update.py` compara os módulos com `supported_games.json` e imprime `update: code identical…` ou
+`…differs…`.
+
+**O `main` do update japonês é outro build** (capturas do testador na issue #1, 2026-11-27): os outros quatro
+módulos têm as mesmas faixas de texto do US, mas o `main` tem 20585 funções contra 20587 do US, 20268 FDEs contra
+20270, e o texto termina em `0x1000c06fe8`, não em `…c07540` (0x558 bytes a menos). O build parava em
+`symbols.txt: Display_SetMode 0x10008b7f1c is not a recompiled function start`. Desde então o `gen_main` acha cada
+símbolo nomeado pela assinatura em `tools/recomp/symbols.sig` (`symbol_sigs.py`: só hashes e tamanhos) e deixa de
+fora, com aviso, o que não achar, inclusive o gancho. Os globais `g_PresentInterval`/`g_FrameRate` são achados
+pela referência a `…12bbcd0` (deslocamentos −4 e −0xc), que vem de uma função de corpo único.

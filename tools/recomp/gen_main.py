@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nso import Process  # noqa: E402
 from recomp.gen import Emitter, Module, discover, fn_name  # noqa: E402
 from recomp.a64 import hx  # noqa: E402
+from recomp.symbol_sigs import SIG_PATH, read_sigs, read_symbols, relocate as relocate_symbols  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,33 +58,6 @@ def update_region(exefs):
     return meta.get("region") or region_of(int(meta.get("title_id", "0"), 16)) or "US"
 
 
-def read_symbols(path):
-    """tools/recomp/symbols.txt: `<addr> <Name> [func|data] [hook]  # note` per line -> list of
-    (addr, name, is_func, is_hook). Names must be C identifiers and unique; so must addresses."""
-    out, names, addrs = [], set(), set()
-    if not os.path.exists(path):
-        return out
-    for n, ln in enumerate(open(path), 1):
-        ln = ln.split("#")[0].strip()
-        if not ln:
-            continue
-        parts = ln.split()
-        if len(parts) < 2 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", parts[1]):
-            raise SystemExit(f"{path}:{n}: expected `<addr> <Name> [func|data] [hook]`")
-        addr, name, attrs = int(parts[0], 16), parts[1], set(parts[2:])
-        if attrs - {"func", "data", "hook"}:
-            raise SystemExit(f"{path}:{n}: unknown attribute in {sorted(attrs)}")
-        is_func = "data" not in attrs
-        if "hook" in attrs and not is_func:
-            raise SystemExit(f"{path}:{n}: a data symbol cannot be a hook")
-        if name in names or addr in addrs:
-            raise SystemExit(f"{path}:{n}: duplicate symbol {name} / {addr:#x}")
-        names.add(name)
-        addrs.add(addr)
-        out.append((addr, name, is_func, "hook" in attrs))
-    return out
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--modules", default="rtld,main,subsdk0,subsdk1,sdk")
@@ -97,6 +71,8 @@ def main():
                     help="guest functions the runtime overrides (hex, one per line, # comments)")
     ap.add_argument("--symbols", default=os.path.join(HERE, "symbols.txt"),
                     help="named guest symbols; those marked `hook` are overridden like --hooks entries")
+    ap.add_argument("--sigs", default=SIG_PATH,
+                    help="signatures of those symbols, to find them in another build of the code (symbol_sigs.py)")
     ap.add_argument("--no-regcache", action="store_true",
                     help="keep guest registers in Ctx throughout (gen.regcache_emit; A/B tests)")
     ap.add_argument("--no-libc-intrinsics", action="store_true",
@@ -119,7 +95,8 @@ def main():
     if os.path.exists(a.hooks):
         hooks = {int(ln.split("#")[0], 16) for ln in open(a.hooks) if ln.split("#")[0].strip()}
         log(f"{len(hooks)} hooked functions from {a.hooks}")
-    symbols = read_symbols(a.symbols)
+    # Addresses in symbols.txt are the US update's; another release may hold the same code elsewhere (issue #1).
+    symbols = relocate_symbols(proc, read_symbols(a.symbols), read_sigs(a.sigs), log)
     sym_hooks = {addr for addr, _, _, hook in symbols if hook}
     if sym_hooks - hooks:
         log(f"{len(sym_hooks - hooks)} hooked functions from {a.symbols}")

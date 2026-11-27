@@ -17,6 +17,10 @@
 - **The Japanese release is accepted** (#1; also the one sold in Asia): base `0100EAE003A5A000`, update 1.5.0
   `0100EAE003A5A800` and its DLCs. The build detects the release from the files and the game runs in Japanese. Not
   tested yet: the build says whether the update's code is identical to the tested US one.
+- **The Japanese build no longer stops at `Display_SetMode … is not a recompiled function start`** (#1): its game
+  code is the same as the US one but at other addresses, so the build now finds each function the PC version
+  hooks (60 fps battles, 3D resolution) by its signature, and prints `symbols: … moved in this build`. A function
+  it cannot find is left out with a warning, and the game keeps its own behaviour there.
 
 ## FEW Recomp v0.2.0 (2026-11-24)
 

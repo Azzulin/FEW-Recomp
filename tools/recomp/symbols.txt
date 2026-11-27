@@ -9,6 +9,11 @@
 # f_<addr>_orig and the runtime defines f_<addr> (see runtime/src/game/hook.h). A data symbol only
 # gets HW_ADDR_<Name>. Addresses are guest addresses (main at 0x1000000000). Names are ours, inferred.
 #
+# Addresses are the US update's. symbols.sig holds a signature of each (hashes only); gen_main uses it to find the
+# same code in another release (the Japanese main is another build, GitHub issue #1) and leaves out, with a warning,
+# a symbol it cannot find. After editing this file, regenerate it from the US ExeFS and a generated functable.c:
+#   python -m recomp.symbol_sigs --exefs ../data/update/exefs --functable ../generated/functable.c   (from tools/)
+#
 # Hyrule Warriors' list (same KTGL engine, a generation earlier) is kept for reference in games/hwde/symbols.txt;
 # its addresses do not apply here.
 

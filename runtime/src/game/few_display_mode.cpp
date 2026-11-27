@@ -25,6 +25,9 @@
 #include "gpu/settings.h"
 #include "hwder/runtime.h"
 
+// gen_main leaves a symbol out when it cannot find its code in the user's release (tools/recomp/symbol_sigs.py,
+// GitHub issue #1): the hook is then not built and the game keeps its own behaviour.
+#ifdef HW_ADDR_Display_SetMode
 HW_HOOK(Display_SetMode) {
     const u64 sys = c->x[0];
     const u32 mode = (u32)c->x[1];
@@ -48,12 +51,14 @@ HW_HOOK(Display_SetMode) {
     if (to == mode && (mode == 0 || mode == 3) && settings::video().low_res_30)
         game::write<u32>(sys + 0x44, mode == 0 ? 3u : 8u);
 }
+#endif
 
 // The dynamic resolution controller steps the configuration id within its mode's group (0-2, 3-4, 5-6; 7-9 fixed) from
 // the GPU time it reads in its timestamp reports. Here those report when the command thread reaches them, not when the
 // GPU did the work, so the "GPU time" includes command-thread latency and the picture drops to the lowest step while
 // the GPU idles. Keep each group's first (largest) configuration, or with res_630p the Performance group's lower
 // step (id 4: 1120x630 instead of 1280x720; docs/few.md "Resolução dinâmica").
+#ifdef HW_ADDR_DynRes_Update
 HW_HOOK(DynRes_Update) {
     static const u32 kGroupTop[10] = {0, 0, 0, 3, 3, 5, 5, 7, 8, 9};
     const u32 id = (u32)c->x[0];
@@ -66,3 +71,4 @@ HW_HOOK(DynRes_Update) {
     }
     c->x[0] = to;
 }
+#endif
