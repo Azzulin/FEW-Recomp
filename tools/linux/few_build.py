@@ -193,6 +193,24 @@ def find_inputs(game_dir, keys):
     return base[0], update[0], keys
 
 
+def given_inputs(base, update, keys):
+    """Files named one by one (RecompLauncher's setup step): any file names; the update's ticket says its release
+    when it is unpacked (game_update.py), and the base game is checked by the game itself when it starts."""
+    files = []
+    for what, value in (("base game NSP (--base)", base), ("update 1.5.0 NSP (--update)", update),
+                        ("prod.keys (--keys)", keys)):
+        if not value:
+            raise BuildError(f"Missing the {what}.")
+        path = Path(value).expanduser().resolve()
+        if not path.is_file():
+            raise BuildError(f"The {what} was not found: {path}")
+        files.append(path)
+    info(f"base   : {files[0]}")
+    info(f"update : {files[1]}")
+    info(f"keys   : {files[2]}")
+    return tuple(files)
+
+
 # ---- Build tools -----------------------------------------------------------------------------------------------
 
 def tools_home():
@@ -440,6 +458,8 @@ def main(argv=None):
     ap.add_argument("--game-dir", default=str(ROOT / "Game Files"),
                     help='folder with the base, update 1.5.0 and DLC NSPs (default: "Game Files")')
     ap.add_argument("--keys", default="", help="your prod.keys (default: in the game folder or next to this script)")
+    ap.add_argument("--base", default="", help="the base game NSP itself, any name (with --update; skips --game-dir)")
+    ap.add_argument("--update", default="", help="the update 1.5.0 NSP itself, any name (with --base)")
     ap.add_argument("--out", default=str(ROOT / "FireEmblemWarriors"), help="game folder (default: %(default)s)")
     ap.add_argument("--jobs", type=int, default=0, help="parallel compiles (default: from free RAM and CPUs)")
     deck = ap.add_mutually_exclusive_group()
@@ -475,7 +495,10 @@ def main(argv=None):
              f"{jobs} parallel compiles, CPU target {march or 'generic AVX2'}")
         if not a.tools_only:
             step("Your game files")
-            base, update, keys = find_inputs(a.game_dir, a.keys)
+            if a.base or a.update:
+                base, update, keys = given_inputs(a.base, a.update, a.keys)
+            else:
+                base, update, keys = find_inputs(a.game_dir, a.keys)
         step(f"Build tools (downloaded once, about 190 MB, kept in {tools_dir})")
         tc = ensure_toolchain(tools_dir)
         deps = ensure_linux_deps(tools_dir)
@@ -503,7 +526,7 @@ def main(argv=None):
                 info("not added; you can run the script again with --steam later")
     except BuildError as e:
         print(f"\nERROR: {e}", file=sys.stderr, flush=True)
-        if not a.tools_only:
+        if not a.tools_only and not os.environ.get("RECOMPLAUNCHER"):  # the launcher keeps its own full log
             print(f"Everything shown here is also in {LOG}: attach that file if you report the problem.",
                   file=sys.stderr, flush=True)
         return 1

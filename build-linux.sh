@@ -14,7 +14,8 @@ here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 # Started by a double-click (no terminal, but a desktop): reopen in a terminal window so the progress, the questions
 # and any error can be seen. The window stays open at the end until Enter is pressed.
-if [ -z "${FEW_IN_TERMINAL:-}" ] && [ ! -t 0 ] && [ ! -t 1 ] \
+# Never under RecompLauncher, which runs its setup step without a window (few-prepare.sh).
+if [ -z "${FEW_IN_TERMINAL:-}" ] && [ -z "${RECOMPLAUNCHER:-}" ] && [ ! -t 0 ] && [ ! -t 1 ] \
    && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
     export FEW_IN_TERMINAL=1
     script="$here/build-linux.sh"

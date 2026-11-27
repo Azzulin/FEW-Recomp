@@ -37,6 +37,10 @@ audio, video, file system). No emulator, no JIT.
 [GUIDE.md](GUIDE.md).** It also covers building the Deck version on a Windows PC, settings, saves, updating and
 troubleshooting.
 
+**RecompLauncher:** from v0.3.0 on, the releases also carry Windows and Linux files that
+[RecompLauncher](https://recomplauncher.com) can install and set up (it builds the game from your files, as above);
+listing in its catalog is requested. See [GUIDE.md, section 5D](GUIDE.md#5d-with-recomplauncher).
+
 ### Status
 
 - **Windows:** boot, videos, menus, save creation, cutscenes and battles, with the five DLCs mounted. Battles run

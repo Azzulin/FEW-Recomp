@@ -15,11 +15,16 @@
   .\gerar-few.ps1            # tudo
   .\gerar-few.ps1 -Launch    # tudo e abre o jogo
   .\gerar-few.ps1 -SoBuild   # pula update e geracao do C (so recompila o runtime)
+  .\gerar-few.ps1 -BaseNsp D:\base.nsp -UpdateNsp D:\upd.nsp -Keys D:\prod.keys -ToolsData D:\cache
+                             # arquivos por caminho, com qualquer nome (o setup do RecompLauncher usa assim)
 #>
 [CmdletBinding()]
 param(
     [string]$Jogo,                                                   # padrao: .\Game Files
     [string]$Keys,
+    [string]$BaseNsp,                                                # com -UpdateNsp: dispensa -Jogo e os nomes
+    [string]$UpdateNsp,
+    [string]$ToolsData,                                              # pasta do toolchain privado (padrao: %LOCALAPPDATA%\HWDER)
     [int]$Jobs = [Math]::Min(8, [Environment]::ProcessorCount),
     [switch]$SoBuild,
     [switch]$Launch
@@ -35,6 +40,14 @@ function Fail($m) { Write-Host "ERRO: $m" -ForegroundColor Red; exit 1 }
 
 # --- entradas ---------------------------------------------------------------------------------------------
 Step 'Entradas'
+if ($BaseNsp -or $UpdateNsp) {
+    # Arquivos dados um a um (setup do RecompLauncher): o ticket do update diz a versao ao desempacotar.
+    foreach ($f in @($BaseNsp, $UpdateNsp, $Keys)) {
+        if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Leaf)) { Fail "Arquivo nao encontrado: '$f' (passe -BaseNsp, -UpdateNsp e -Keys)." }
+    }
+    $base = @(Get-Item -LiteralPath $BaseNsp)
+    $upd = @(Get-Item -LiteralPath $UpdateNsp)
+} else {
 $all = @(Get-ChildItem -LiteralPath $Jogo -Filter *.nsp -ErrorAction SilentlyContinue)
 # Versao: a dos EUA ou a japonesa (vendida tambem na Asia; issue #1), pela base presente (tools\game_profile.py REGIONS).
 $regioes = [ordered]@{ US = '0100F15003E64000'; JP = '0100EAE003A5A000' }
@@ -48,6 +61,7 @@ $upd = @($all | Where-Object { $_.Name -match "\[$updId\]" })
 if ($base.Count -ne 1) { Fail "Esperava 1 NSP da base [0100F15003E64000] (EUA) ou [0100EAE003A5A000] (Japao) em $Jogo (achei $($base.Count))." }
 if ($upd.Count -ne 1) { Fail "Esperava 1 NSP do update [$updId] em $Jogo (achei $($upd.Count))." }
 if ($regiao -ne 'US') { Write-Host "versao: $regiao (ainda nao testada; conte como roda)" -ForegroundColor Yellow }
+}
 if (-not $Keys) {
     $Keys = @((Join-Path $Jogo 'prod.keys'), (Join-Path $root 'prod.keys')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }
@@ -76,9 +90,38 @@ foreach ($d in $deps) {
 
 # --- toolchain privado (o mesmo do HWDER; certificado por tools\managed_tools.py) ----------------------------
 Step 'Toolchain privado'
-$roots = @((Join-Path $env:LOCALAPPDATA 'HWDER'))
-$roots += @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -Filter 'Claude_*' -ErrorAction SilentlyContinue |
-            ForEach-Object { Join-Path $_.FullName 'LocalCache\Local\HWDER' })
+if ($ToolsData) {
+    $roots = @($ToolsData)
+} else {
+    $roots = @((Join-Path $env:LOCALAPPDATA 'HWDER'))
+    $roots += @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -Filter 'Claude_*' -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName 'LocalCache\Local\HWDER' })
+}
+# Python para instalar o toolchain quando o sistema nao tem um: o Python embutivel fixado em
+# tools\managed_toolchain.json, conferido pelo SHA-256 (nada e instalado no sistema).
+function Get-PinnedPython([string]$dir) {
+    $m = Get-Content -Raw -LiteralPath (Join-Path $root 'tools\managed_toolchain.json') | ConvertFrom-Json
+    $p = @($m.artifacts | Where-Object { $_.id -eq 'python' })[0]
+    $target = Join-Path $dir ('bootstrap-python-' + $p.version)
+    $exe = Join-Path $target 'python.exe'
+    if (Test-Path -LiteralPath $exe) { return $exe }
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $zip = Join-Path $dir ('bootstrap-python-' + $p.version + '.zip')
+    Write-Host "baixando o Python $($p.version) fixado ($($p.url))"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try { Invoke-WebRequest -UseBasicParsing -Uri $p.url -OutFile $zip } catch { Fail "Download do Python falhou: $($_.Exception.Message)" }
+    finally { $ProgressPreference = $old }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower() -ne $p.sha256.ToLower()) {
+        Remove-Item -LiteralPath $zip -Force; Fail 'O Python baixado nao confere com o SHA-256 fixado; nada foi usado.'
+    }
+    $partial = "$target.partial"
+    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Recurse -Force }
+    Expand-Archive -LiteralPath $zip -DestinationPath $partial -Force
+    Move-Item -LiteralPath $partial -Destination $target
+    Remove-Item -LiteralPath $zip -Force
+    return $exe
+}
 $managed = $null
 foreach ($r in $roots) {
     $c = @(Get-ChildItem (Join-Path $r 'managed-tools') -Directory -ErrorAction SilentlyContinue |
@@ -87,7 +130,8 @@ foreach ($r in $roots) {
 }
 if (-not $managed) {
     $sys = (Get-Command python -ErrorAction SilentlyContinue).Source
-    if (-not $sys) { Fail 'Sem toolchain privado e sem Python no sistema para instala-lo.' }
+    # Sem Python, com o atalho da Microsoft Store (WindowsApps) ou no setup do RecompLauncher: o fixado.
+    if ($ToolsData -or -not $sys -or $sys -like '*\WindowsApps\*') { $sys = Get-PinnedPython $roots[0] }
     & $sys -X utf8 -u (Join-Path $root 'tools\managed_tools.py') --data $roots[0] --install
     if ($LASTEXITCODE) { Fail 'Instalacao do toolchain falhou.' }
     $managed = (Get-ChildItem (Join-Path $roots[0] 'managed-tools') -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'complete.json') } | Select-Object -First 1).FullName

@@ -17,6 +17,7 @@ your dump.
 | a Steam Deck, building on the Deck itself (no other computer needed) | [1](#1-what-you-need) → [5A](#5a-steam-deck-step-by-step) |
 | a Linux PC (Bazzite, Arch, Fedora, Ubuntu, …) | [1](#1-what-you-need) → [2](#2-get-the-source) → [3](#3-put-your-game-files-in-place) → [5B](#5b-linux-pc) |
 | a Steam Deck, building on a Windows PC (faster) | [4](#4-windows) first, then [5C](#5c-steam-deck-built-on-a-windows-pc) |
+| Windows, Linux or a Steam Deck, through [RecompLauncher](https://recomplauncher.com) | [1](#1-what-you-need) → [5D](#5d-with-recomplauncher) |
 
 Then: [6. Settings, saves and logs](#6-settings-saves-and-logs) · [7. Updating](#7-updating-to-a-newer-version) ·
 [8. Troubleshooting](#8-troubleshooting) · [9. Reporting a problem](#9-reporting-a-problem)
@@ -208,6 +209,26 @@ Faster than building on the Deck, but the ~20 GB folder has to be copied to the 
    sh instalar-no-deck.sh
    ```
    It adds **Fire Emblem Warriors** to Steam (Steam closes and reopens). Back in Gaming Mode it's under *Non-Steam*.
+
+## 5D. With RecompLauncher
+
+From v0.3.0 on, each release has a Windows file (`FEW-Recomp-<version>-Windows-x64.zip`) and a Linux / Steam Deck
+file (`FEW-Recomp-<version>-Linux-x64.tar.gz`) that [RecompLauncher](https://recomplauncher.com) can install,
+set up and keep updated. They hold no game code: the launcher's setup step builds the game on your machine, the
+same way as the sections above. Listing in RecompLauncher's catalog is requested, not done yet: until the game
+appears there, use one of the other paths.
+
+1. Install *Fire Emblem Warriors Recomp* in RecompLauncher.
+2. On the setup screen, pick your **base game NSP**, your **update 1.5.0 NSP** (same release), any **DLC NSPs** you
+   have, and your **`prod.keys`**. File names don't matter here.
+3. The setup step ("Getting the extras") downloads the pinned build tools once and builds the game: about an hour
+   on a desktop PC, a few hours on a Steam Deck. Keep the Deck plugged in. If it stops, press **Set Up** again: it
+   continues where it stopped. If it fails, the last lines say why; **Copy** them into an issue.
+4. Press **Play**. Keep your NSPs where they are: the game reads the base game while you play.
+
+Each new release builds the game again (only what changed), when the launcher asks you to *Finish the Update*.
+Saves are in `Jogar no PC/save` (Windows) or `FireEmblemWarriors/save` (Linux) inside the game's folder, and the
+launcher's backups include them.
 
 ## 6. Settings, saves and logs
 

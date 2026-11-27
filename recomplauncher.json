@@ -2,13 +2,167 @@
   "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
   "format": 1,
   "name": "Fire Emblem Warriors Recomp",
+  "repo": "Azzulin/FEW-Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your Fire Emblem Warriors base game (.nsp, v0): the US release [0100F15003E64000] or the Japanese one [0100EAE003A5A000].",
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "update",
+      "label": "Update 1.5.0 (.nsp, v327680) of the same release: [0100F15003E64800] (US) or [0100EAE003A5A800] (Japanese).",
+      "role": "update",
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dlc1",
+      "label": "DLC 1 (.nsp, optional)",
+      "role": "dlc",
+      "optional": true,
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ],
+      "into": "dlc"
+    },
+    {
+      "id": "dlc2",
+      "label": "DLC 2 (.nsp, optional)",
+      "role": "dlc",
+      "optional": true,
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ],
+      "into": "dlc"
+    },
+    {
+      "id": "dlc3",
+      "label": "DLC 3 (.nsp, optional)",
+      "role": "dlc",
+      "optional": true,
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ],
+      "into": "dlc"
+    },
+    {
+      "id": "dlc4",
+      "label": "DLC 4 (.nsp, optional)",
+      "role": "dlc",
+      "optional": true,
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ],
+      "into": "dlc"
+    },
+    {
+      "id": "dlc5",
+      "label": "DLC 5 (.nsp, optional)",
+      "role": "dlc",
+      "optional": true,
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nsp"
+          ]
+        }
+      ],
+      "into": "dlc"
+    },
+    {
+      "id": "keys",
+      "label": "prod.keys from your own console",
+      "role": "key",
+      "shared": "switch.prod-keys"
+    }
+  ],
+  "prepare": {
+    "program": [
+      "few-prepare.bat"
+    ],
+    "args": [
+      "--game={input:game}",
+      "--update={input:update}",
+      "--keys={input:keys}"
+    ],
+    "label": "Building the game from your update (the first time takes about an hour on a PC and a few hours on a Steam Deck)",
+    "done": [
+      "{install}/Jogar no PC/few.exe"
+    ]
+  },
   "start": {
-    "program": ["Jogar no PC/few.exe", "FireEmblemWarriors/few-steam.sh"]
+    "program": [
+      "Jogar no PC/few.exe"
+    ],
+    "env": {
+      "HWDER_NSP": "{input:game}",
+      "HWDER_KEYS": "{input:keys}",
+      "HWDER_UPDATE": "{install}/data/update",
+      "HWDER_AOC_DIR": "{install}/dlc",
+      "HWDER_NO_PRELAUNCH": "1"
+    }
   },
-  "saves": ["{install}/Jogar no PC/save", "{install}/FireEmblemWarriors/save"],
+  "saves": [
+    "{install}/Jogar no PC/save"
+  ],
   "folders": {
-    "saves": [{ "path": "{install}/Jogar no PC/save" }, { "path": "{install}/FireEmblemWarriors/save" }],
-    "logs": [{ "path": "{install}/Jogar no PC" }, { "path": "{install}/FireEmblemWarriors" }]
+    "game": [
+      {
+        "path": "{install}/Jogar no PC"
+      }
+    ],
+    "saves": [
+      {
+        "path": "{install}/Jogar no PC/save"
+      }
+    ],
+    "logs": [
+      {
+        "path": "{install}/Jogar no PC"
+      }
+    ]
   },
-  "exit_codes": { "0": "ok" }
+  "exit_codes": {
+    "0": "ok"
+  },
+  "system": {
+    "windows": {
+      "version": "10"
+    }
+  }
 }

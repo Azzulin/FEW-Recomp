@@ -14,6 +14,12 @@
 - When the update cannot be unpacked, the build says why (not the US update 1.5.0, a key missing from `prod.keys`,
   a damaged NSP) instead of a Python error, and it refuses an update other than 1.5.0 up front.
 - The Linux build saves everything it prints in `build-linux.log`, to attach to a problem report.
+- **RecompLauncher support:** each release now has a Windows zip and a Linux / Steam Deck tarball that
+  [RecompLauncher](https://recomplauncher.com) can install. Its setup step builds the game from the files you pick
+  (base, update, DLCs, `prod.keys`), with progress, without Python or git on Windows, and says why when it stops.
+  Listing in the launcher's catalog is requested. `gerar-few.ps1` and `build-linux.sh` also take the files by path
+  now (`-BaseNsp`/`-UpdateNsp`, `--base`/`--update`), and `gerar-few.ps1` fetches the pinned Python itself when the
+  PC has none.
 - **The Japanese release is accepted** (#1; also the one sold in Asia): base `0100EAE003A5A000`, update 1.5.0
   `0100EAE003A5A800` and its DLCs. The build detects the release from the files and the game runs in Japanese. Not
   tested yet: the build says whether the update's code is identical to the tested US one.

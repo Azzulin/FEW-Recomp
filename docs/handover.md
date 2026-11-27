@@ -1,7 +1,53 @@
 # Handover — estado e próximos passos
 
-Atualizado em 2026-11-24. **Próxima sessão: comece pela seção "Retomar aqui"** (o trabalho no jogo) e veja antes o
-que mudou em "Release pública". Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
+Atualizado em 2026-11-27. **Próxima sessão: comece por "Começar aqui (2026-11-26)"**, logo abaixo; o trabalho no
+jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atualize ao terminar uma sessão.
+
+## Começar aqui (2026-11-26)
+
+### Onde está cada coisa
+
+- **GitHub `main`** (`Azzulin/FEW-Recomp`, **público**: a nota de "privado" em "Release pública" abaixo está
+  desatualizada), publicada em 2026-11-27: correções das issues #2, #3 e #1 (`5ac2be3`, `6e4941e`, `0a04d44`), os
+  símbolos por assinatura da #1 (`741381b`) e, no commit seguinte, o pacote e o setup do RecompLauncher.
+- A cópia local `Downloads\FEW-Recomp-main` é um zip extraído, **sem git**; batia com a `main` depois desse push.
+  Para publicar algo dela: clonar o repositório, copiar por cima os arquivos mudados e conferir com `git diff`.
+  `few-prepare.sh` precisa de modo 100755 no índice (`git update-index --chmod=+x`); no Windows entra como 100644.
+
+### Issues (todas abertas)
+
+| Issue | Estado | Próximo passo |
+|---|---|---|
+| #2 crash no menu Camp (Windows) | Corrigido em `5ac2be3` (TLS e handles das threads que terminam; ver "Crash da issue #2") | Ninguém comentou ainda. Validar jogando mais de 10 min (20 no Deck) e ver as linhas `kernel: … kept` no `hwder.log`; depois responder à issue |
+| #3 build no Deck demorado / "fail updated" | `6e4941e`; pedido novo teste ao usuário | Esperar o `build-linux.log` dele, caso falhe de novo |
+| #1 versão japonesa | `0a04d44` aceita a região. O testador respondeu em 27/11: o `main` japonês é outro build e o build parava em `Display_SetMode … is not a recompiled function start`. Corrigido em `741381b` (símbolos por assinatura); novo teste pedido na issue em 27/11 | Esperar as linhas `symbols: … moved in this build`, se o jogo abre e se a batalha fica a 60 fps |
+
+### Pendências, por ordem
+
+1. **Testar dentro do RecompLauncher**: Settings → Developers → Developer tools → *Add a build* apontando para a
+   pasta extraída de um asset. Fazer no Windows e no Deck. Depois, um setup completo com o dump real (o build leva
+   horas no Deck).
+2. **Release v0.3.0**: atualizar o `CHANGELOG.md` (renomear "Unreleased"), criar a tag, rodar
+   `python tools/recomplauncher/package.py --version v0.3.0` num checkout limpo e subir os dois arquivos de `dist/`
+   como **release normal** (não pré-release). Passo a passo em [docs/recomplauncher.md](recomplauncher.md).
+3. **Catálogo do RecompLauncher**: conta de desenvolvedor (aprovação manual) e envio em
+   `recomplauncher.com/submit?platform=pc`. Conferir se o launcher aceita só o tarball no Linux (o guia pede também
+   um AppImage).
+4. **Responder à #2** depois da validação; na #1, acompanhar o teste do usuário japonês.
+
+### Armadilhas desta sessão
+
+- A cópia local sem git foi a base de tudo. Ela batia com a `main` em 2026-11-26; para outra cópia, confira com
+  `git diff` antes de copiar arquivos.
+- Clone no Windows com `core.autocrlf=true`: o empacotador lê do **índice** do git (LF; `.bat` em CRLF), nunca da
+  árvore de trabalho. `git add` antes de empacotar; `--allow-dirty` só para teste.
+- O `.gitignore` ignora `*.bat` e `*.ps1`. Arquivo novo desse tipo precisa de exceção `!caminho`.
+- Commits: identidade `Azzulin <126606424+Azzulin@users.noreply.github.com>` (`git config` local no clone),
+  mensagens em português sem acento e sem prefixo de tipo, mais o trailer `Co-Authored-By`.
+- No Windows, o toolchain do setup do launcher fica em `%LOCALAPPDATA%\HWDER`, não em `{data}`, por causa do limite
+  de 260 caracteres de caminho (medido). Detalhes em [docs/recomplauncher.md](recomplauncher.md).
+- Teste de ponta a ponta: rodar o `few-prepare.bat` direto, sem `cmd /c`, que remove as aspas de caminhos com espaço.
+  O teste do Linux roda no WSL `archlinux`, em `/tmp`. Limpe `%TEMP%\fewt` e `/tmp/few-e2e` no fim.
 
 ## Release pública (2026-11-24)
 
@@ -16,7 +62,8 @@ SHA-256 de binários, não commits). Endereço e chave do Deck ficam agora em `t
 git e lido pelos scripts de `tools/deck/`. **Nunca versionar IP, chave, UUID do cartão ou caminhos locais.**
 
 Releases **v0.1.0** e **v0.2.0** no GitHub, as duas como *prerelease* (só código; cada um gera a partir do próprio
-dump; o repositório segue **privado**, por escolha do dono: não mudar a visibilidade). Para jogadores: `README.md`
+dump; o repositório seguia **privado**, por escolha do dono; em 2026-11-26 já estava **público**: não mude a
+visibilidade sem ele pedir). Para jogadores: `README.md`
 e `GUIDE.md`, em inglês. Nova release: atualizar o `CHANGELOG.md` (entradas "FEW Recomp vX.Y.Z"; o histórico do
 HWDER fica abaixo, em "HWDER history"), criar a tag `vX.Y.Z` e publicar com notas em inglês. Sem o `gh` instalado,
 a release sai pela API REST com o token de `git credential fill` (nunca imprimir o token).
@@ -67,6 +114,30 @@ Build no Linux:
   `/sbin/fstrim`, mas o `ext4.vhdx` dele continua com ~27 GB no C: (~17 GB usados dentro). O modo esparso do WSL
   (`--set-sparse true`) não devolveu nada e foi desfeito. Só encolhe compactando com `diskpart` como
   administrador (`wsl --shutdown` antes); o dono recusou essa etapa em 2026-11-24: não fazer sem ele pedir.
+
+## RecompLauncher: pacote de release e setup (2026-11-26, falta testar dentro do launcher)
+
+Tudo em [docs/recomplauncher.md](recomplauncher.md): manifesto por sistema (`tools/recomplauncher/manifest.py`),
+empacotador (`package.py`), setup `few-prepare.bat` → `prepare.ps1` → `gerar-few.ps1 -BaseNsp -UpdateNsp -Keys
+-ToolsData` e `few-prepare.sh` → `prepare.py` → `few_build.py --base --update --keys --no-steam --tools-dir`.
+
+- `gerar-few.ps1` ganhou `-BaseNsp`/`-UpdateNsp`/`-ToolsData` e baixa o Python embutível fixado quando não há Python
+  (ou só o atalho da Microsoft Store). `few_build.py` ganhou `--base`/`--update`; sob `RECOMPLAUNCHER` não imprime a
+  dica do `build-linux.log`. `build-linux.sh` não reabre num terminal sob `RECOMPLAUNCHER`.
+- `.gitignore`: exceções para `few-prepare.bat` e `prepare.ps1` (os padrões `*.bat`/`*.ps1` os escondiam) e
+  `/recompdata/`, `/dlc/`, `/.recomplauncher-tmp/`. No índice, `few-prepare.sh` precisa de modo 100755
+  (`git update-index --chmod=+x`; o Windows não marca sozinho).
+- **Teste real no Windows** (zip da release, NSPs falsos, sem Python no PATH): Python fixado baixado e conferido,
+  toolchain privado instalado e aprovado nos imports, progresso por ferramenta, parada na extração do update com o
+  motivo em inglês por último. A primeira tentativa achou o limite de 260 caracteres: com o toolchain em
+  `{data}\cache\tools` sob uma pasta longa, `_cffi_backend` não carregava. Por isso o Windows usa `%LOCALAPPDATA%\HWDER`.
+- **Teste real no Linux** (tarball no WSL archlinux, Python 3.14): bits de execução preservados, toolchain baixado em
+  `{data}/cache/tools` com velocidade e tempo restante, mesma parada com o motivo por último.
+- `tools/tests/test_recomplauncher.py` (7 testes, sem rede): manifesto, raiz em sincronia com o do Windows,
+  mapeamento de progresso, `\r\n` partido entre leituras, motivo do update, "Already built".
+- Falta: testar dentro do RecompLauncher (Windows e Deck), um build completo pelo setup com dump real, publicar a
+  primeira release com os assets (v0.3.0, release normal) e pedir a entrada no catálogo (conta de desenvolvedor +
+  /submit). AppImage não é publicado; conferir se o launcher aceita só o tarball no Linux.
 
 ## Issue #1: versão japonesa (2026-11-26, sem teste: não há dump japonês)
 

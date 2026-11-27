@@ -62,4 +62,12 @@ __pycache__/
 !tools/tests/test_private_python.ps1
 !tools/screenshot.ps1
 !tools/run_test.ps1
+# (setup do RecompLauncher; o que ele cria na pasta do jogo fica ignorado abaixo)
+!/few-prepare.bat
+!tools/recomplauncher/prepare.ps1
 /tools/deck/deck.local
+
+# RecompLauncher: dados do jogo, DLCs ligadas antes de jogar e pasta temporaria do setup
+/recompdata/
+/dlc/
+/.recomplauncher-tmp/
