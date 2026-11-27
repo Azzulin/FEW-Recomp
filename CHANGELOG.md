@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## FEW Recomp v0.3.0 (2026-11-27)
 
 - **Fixed a crash after about 9 minutes of play at 60 fps (18 at 30 fps)**, reported as "crashed going to Camp
   menu" (#2). The game starts a short-lived thread about every frame, and each one used up a slot of thread-local

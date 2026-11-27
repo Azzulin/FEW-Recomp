@@ -10,6 +10,9 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 - **GitHub `main`** (`Azzulin/FEW-Recomp`, **público**: a nota de "privado" em "Release pública" abaixo está
   desatualizada), publicada em 2026-11-27: correções das issues #2, #3 e #1 (`5ac2be3`, `6e4941e`, `0a04d44`), os
   símbolos por assinatura da #1 (`741381b`) e, no commit seguinte, o pacote e o setup do RecompLauncher.
+- **Release v0.3.0** (2026-11-27, release normal, tag `v0.3.0`): tudo acima, com os assets
+  `FEW-Recomp-v0.3.0-Windows-x64.zip` e `FEW-Recomp-v0.3.0-Linux-x64.tar.gz` para o RecompLauncher. v0.1.0 e v0.2.0
+  continuam como pré-release.
 - A cópia local `Downloads\FEW-Recomp-main` é um zip extraído, **sem git**; batia com a `main` depois desse push.
   Para publicar algo dela: clonar o repositório, copiar por cima os arquivos mudados e conferir com `git diff`.
   `few-prepare.sh` precisa de modo 100755 no índice (`git update-index --chmod=+x`); no Windows entra como 100644.
@@ -30,9 +33,9 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
    "Testado e pendente"). A seção Developers do launcher só aparece com conta de desenvolvedor verificado ou com
    uma build local já adicionada; sem conta, use o modo de teste (mesmo documento). Pacotes de teste em
    `Downloads\FEW-Recomp-launcher-test` (`v0.3.0-rc1`; o zip do Windows extraído em `windows\`).
-2. **Release v0.3.0**: atualizar o `CHANGELOG.md` (renomear "Unreleased"), criar a tag, rodar
-   `python tools/recomplauncher/package.py --version v0.3.0` num checkout limpo e subir os dois arquivos de `dist/`
-   como **release normal** (não pré-release). Passo a passo em [docs/recomplauncher.md](recomplauncher.md).
+2. **Próxima release**: abrir de novo uma seção "Unreleased" no `CHANGELOG.md` para o que vier; publicar como a
+   v0.3.0 (tag, `package.py` num checkout limpo, os dois arquivos de `dist/` como release normal). Passo a passo em
+   [docs/recomplauncher.md](recomplauncher.md). Cada release faz o launcher recompilar o jogo de quem já tem.
 3. **Catálogo do RecompLauncher**: conta de desenvolvedor (aprovação manual) e envio em
    `recomplauncher.com/submit?platform=pc`. Conferir se o launcher aceita só o tarball no Linux (o guia pede também
    um AppImage).
