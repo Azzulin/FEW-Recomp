@@ -34,7 +34,6 @@ jobs:
     env:
       VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
       MAKE_RELEASE: ${{ github.event_name == 'push' || inputs.release }}
-      TOOLS: ${{ runner.temp }}\HWDER
     steps:
       - uses: actions/checkout@v4
 
@@ -58,14 +57,14 @@ jobs:
           key: managed-tools-${{ hashFiles('tools/managed_toolchain.json', 'tools/managed_tools.py') }}
 
       - name: Pinned build tools (LLVM-MinGW, CMake, Ninja, Python; each SHA-256 checked)
-        run: python tools/managed_tools.py --data "$env:TOOLS" --install
+        run: python tools/managed_tools.py --data "$env:RUNNER_TEMP\HWDER" --install
 
       - name: Third-party sources at the pinned commits
         run: python tools/fetch_deps.py
 
       - name: Build FEW Recomp Setup.exe
         run: |
-          $tc = (Get-ChildItem "$env:TOOLS\managed-tools" -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'complete.json') } | Select-Object -First 1).FullName
+          $tc = (Get-ChildItem "$env:RUNNER_TEMP\HWDER\managed-tools" -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'complete.json') } | Select-Object -First 1).FullName
           & "$tc\output\python\python.exe" -B -X utf8 tools/build.py --managed-toolchain $tc --build-ui --build-dir build/ui --jobs 4
           if ($LASTEXITCODE) { exit 1 }
           Get-Item build/ui/few-build-ui.exe | Format-List Name, Length
