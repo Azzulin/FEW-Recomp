@@ -24,9 +24,12 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 
 ### Pendências, por ordem
 
-1. **Testar dentro do RecompLauncher**: Settings → Developers → Developer tools → *Add a build* apontando para a
-   pasta extraída de um asset. Fazer no Windows e no Deck. Depois, um setup completo com o dump real (o build leva
-   horas no Deck).
+1. **Testar dentro do RecompLauncher no Deck: adiado pelo dono em 2026-11-27** (o Deck não tem o RecompLauncher
+   instalado). O Windows passou em 2026-11-27: setup completo com o dump real
+   (~50 min) e o jogo abriu pelo launcher com update, DLCs e 60 fps ([docs/recomplauncher.md](recomplauncher.md),
+   "Testado e pendente"). A seção Developers do launcher só aparece com conta de desenvolvedor verificado ou com
+   uma build local já adicionada; sem conta, use o modo de teste (mesmo documento). Pacotes de teste em
+   `Downloads\FEW-Recomp-launcher-test` (`v0.3.0-rc1`; o zip do Windows extraído em `windows\`).
 2. **Release v0.3.0**: atualizar o `CHANGELOG.md` (renomear "Unreleased"), criar a tag, rodar
    `python tools/recomplauncher/package.py --version v0.3.0` num checkout limpo e subir os dois arquivos de `dist/`
    como **release normal** (não pré-release). Passo a passo em [docs/recomplauncher.md](recomplauncher.md).

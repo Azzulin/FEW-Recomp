@@ -67,14 +67,40 @@ Linux rodaria pelo Proton.
 2. Enviar o repositório em <https://recomplauncher.com/submit?platform=pc> e marcar os recursos.
 3. Testar antes como jogador: no launcher, Settings → Developers → Developer tools → *Add a build* apontando para a
    pasta extraída de um dos assets; a aba Developer mostra erros do manifesto. Depois, setup com os próprios arquivos.
+   **A seção Developers só aparece para conta de desenvolvedor verificado ou para quem já tem uma build local**
+   (`devAllowed` no `ui/app.js` do launcher, 0.90 Beta 69). Sem conta aprovada, use o modo de teste do launcher
+   (abaixo).
 
-## Testado e pendente (2026-11-26)
+### Testar pelo modo de teste do launcher (sem conta de desenvolvedor)
+
+O launcher tem um servidor MCP para agentes (`docs/TEST-CONTROL.md` no repositório `elripalda/RecompLauncher`):
+
+1. Fechar o launcher (também o ícone perto do relógio) e abri-lo com `RECOMPLAUNCHER_TEST_CONTROL` = um token de
+   16+ caracteres. Aparece "Test control on" no canto e o `launcher-trail.log` diz `MCP at http://127.0.0.1:47811/mcp`.
+2. Falar com ele por MCP sobre HTTP (`Authorization: Bearer <token>`): `launcher_command` com `dev_add {path}`
+   adiciona a build (a janela só a vê depois de `ui_eval` repetir o `dev_add` pelo `invoke` dela e pôr o resultado em
+   `S.library`); `dev_check {id}` é a aba Developer; `setup_input_set {id, input, path}` escolhe cada arquivo.
+3. Depois disso a seção Developers aparece também para o dono, porque já existe uma build local.
+4. Para desligar: fechar o launcher e abri-lo normalmente.
+
+## Testado e pendente (2026-11-27)
 
 - Manifestos dos dois sistemas validados contra o schema oficial; conteúdo dos pacotes conferido (modos, CRLF/LF,
   `third_party`, nada do jogo).
 - `prepare.py` e `prepare.ps1` testados com um build falso: progresso, "Already built", falha com motivo por último,
   arquivo faltando, caminhos com espaço (o `.bat` chamado direto, como o launcher faz).
 - Windows de ponta a ponta a partir do zip, sem Python no PATH: ver "Teste real" no handover.
-- **Não testado:** dentro do RecompLauncher (Windows e Deck) e o build completo pelo `prepare` com um dump real.
+- **Windows dentro do RecompLauncher, de ponta a ponta (2026-11-27, 0.90 Beta 69, pacote `v0.3.0-rc1` de `b8f1c61`,
+  dump US + 5 DLCs):** a página mostra a Configuração fácil em duas etapas (Jogo: base, update, `prod.keys`;
+  Add-ons: 5 DLCs). Setup: ferramentas baixadas, tradução para C em ~3 min, 717 compilações, ~50 min no total
+  (notebook com 12 threads), "Your files are set up" e "Pronto para jogar". Jogar abriu o jogo com o update, as 5
+  DLCs (`aoc: ListAddOnContent -> 5`) e o modo de 60 fps; menus a 16,67 ms por quadro. As DLCs vão para `{install}/dlc`
+  como hard links (sem ocupar espaço a mais no mesmo disco). `dev_check` antes do setup marca em vermelho
+  `None of "start.program" is in this folder` (o `few.exe` só existe depois do setup, mesmo com `prepare.done`); depois
+  do setup, tudo OK.
+- Os textos do manifesto (rótulos das entradas, do setup) aparecem em inglês no launcher em português: o formato não
+  tem tradução por idioma.
+- **Não testado:** dentro do RecompLauncher no Deck (adiado: o Deck do dono não tem o launcher). O pacote do Linux
+  só foi testado fora do launcher (WSL, ver handover).
 - **AppImage:** o guia pede, no Linux, um tarball e um AppImage da mesma pasta; publicamos só o tarball (o nome tem
   `Linux-x64`, que é como o launcher escolhe o arquivo). Falta confirmar no launcher que só o tarball basta.
