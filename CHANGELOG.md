@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## FEW Recomp v0.4.0 (2026-11-27)
 
 - **The build is about three times faster.** The game's code is now translated with its vector operations already
   spelled out, lane by lane, instead of as thousands of tiny loops the compiler had to unroll itself: in the game's

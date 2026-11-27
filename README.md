@@ -21,7 +21,7 @@ audio, video, file system). No emulator, no JIT.
    `git clone` this repository) and extract it.
 2. Create a `Game Files` folder inside it with your NSPs — base `[0100F15003E64000]`, update 1.5.0
    `[0100F15003E64800]`, DLCs — and your `prod.keys`. The Japanese release (`[0100EAE003A5A000]`, update
-   `[0100EAE003A5A800]`) is also accepted, untested so far.
+   `[0100EAE003A5A800]`) is also accepted: a player reports it running in Japanese at 60 fps.
 3. Build with one command:
 
    | On | Run (in a terminal in the source folder) | The game ends up in |
@@ -30,8 +30,9 @@ audio, video, file system). No emulator, no JIT.
    | **Windows** | `powershell -ExecutionPolicy Bypass -File .\gerar-few.ps1 -Launch` | `Jogar no PC\few.exe` |
 
    Nothing is installed on the system and no admin/`sudo` is needed: pinned build tools are downloaded once and
-   checked by SHA-256. The first build takes from under an hour (desktop PC) to a few hours (Steam Deck); it
-   resumes if interrupted, and later updates only rebuild what changed.
+   checked by SHA-256. The first build takes about 20–45 minutes on a desktop PC and longer on a Steam Deck; a
+   window shows its steps, progress and time left, with a **Play** button at the end. It resumes if interrupted, and
+   later updates only rebuild what changed.
 
 **Step-by-step guide, including a Steam Deck walkthrough for people who never used Desktop Mode:
 [GUIDE.md](GUIDE.md).** It also covers building the Deck version on a Windows PC, settings, saves, updating and
@@ -51,8 +52,8 @@ listing in its catalog is requested. See [GUIDE.md, section 5D](GUIDE.md#5d-with
 - **Steam Deck:** battles at 30 fps (the game's native pace) at 1280×720 with GPU particles; the densest fights can
   still dip below 30. 60 fps is an option in the F1 menu.
 - **Known limits:** resolution scaling stays at 1×; HWDER's extras tied to *Hyrule Warriors* addresses (120 fps,
-  ultrawide, LOD) are off; update 1.5.0 is required; the US release is the tested one, and the Japanese release (also
-  sold in Asia) is accepted but not tested yet; shader stutter the first time each
+  ultrawide, LOD) are off; update 1.5.0 is required; the US release is the one tested here, and the Japanese release
+  (also sold in Asia) is reported working by a player; shader stutter the first time each
   scene is seen. Progress notes (Portuguese): [docs/handover.md](docs/handover.md).
 
 ### Project focus
@@ -102,7 +103,9 @@ module set and almost the same SDK (3.7.0 vs 3.5.1). Third-party sources are fet
 Recompilação estática de *Fire Emblem Warriors* (Switch, update 1.5.0) para um programa nativo x86-64 com Vulkan,
 para **Windows**, **Linux** e **Steam Deck**. **Nenhum arquivo do jogo está incluído**: é preciso a sua própria cópia
 (base, update 1.5.0, DLCs opcionais) e o seu `prod.keys`, extraídos do seu console. A versão testada é a dos EUA;
-a japonesa (vendida também na Ásia) é aceita, ainda sem teste.
+a japonesa (vendida também na Ásia) é aceita e um jogador a relata rodando em japonês a 60 fps. O primeiro build leva
+uns 20–45 minutos num PC de mesa (mais no Steam Deck), com uma janela que mostra as etapas, o progresso e o tempo
+restante.
 
 Para jogar: baixe o código da última release (ou clone), crie `Game Files` com os NSPs e o `prod.keys` e rode
 `bash build-linux.sh` (Steam Deck e Linux: o jogo fica em `FireEmblemWarriors/` e ganha atalho na Steam) ou

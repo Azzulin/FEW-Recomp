@@ -13,6 +13,9 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 - **Release v0.3.0** (2026-11-27, release normal, tag `v0.3.0`): tudo acima, com os assets
   `FEW-Recomp-v0.3.0-Windows-x64.zip` e `FEW-Recomp-v0.3.0-Linux-x64.tar.gz` para o RecompLauncher. v0.1.0 e v0.2.0
   continuam como pré-release.
+- **Release v0.4.0** (2026-11-27, release normal, a mais recente): build ~3x mais rápido e janela de progresso
+  (seção "Build 3x mais rápido e janela de progresso"), com os mesmos dois assets e `SHA256SUMS`. Publicada **sem
+  teste no Deck** (o dono não tem como testar agora): o tempo no Deck foi pedido ao usuário da #3.
 - A cópia local `Downloads\FEW-Recomp-main` é um zip extraído, **sem git**; batia com a `main` depois desse push.
   Para publicar algo dela: clonar o repositório, copiar por cima os arquivos mudados e conferir com `git diff`.
   `few-prepare.sh` precisa de modo 100755 no índice (`git update-index --chmod=+x`); no Windows entra como 100644.
@@ -22,7 +25,7 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 | Issue | Estado | Próximo passo |
 |---|---|---|
 | #2 crash no menu Camp (Windows) | Corrigido em `5ac2be3` (TLS e handles das threads que terminam; ver "Crash da issue #2"). Em 27/11 comentado que está na v0.3.0, com pedido de teste (mais de 10 min, abrir o Camp) | Esperar o retorno; se fechar de novo, pedir o `hwder.log` |
-| #3 build no Deck demorado / "fail updated" | `6e4941e`; em 27/11 avisado que está na v0.3.0 | Esperar o `build-linux.log` dele, caso falhe de novo |
+| #3 build no Deck demorado / "fail updated" | `6e4941e`; em 27/11 avisado que está na v0.3.0. Também em 27/11: avisado da v0.4.0 (build ~3x mais rápido, janela de progresso) e pedido o tempo do build no Deck | Esperar o tempo dele e se a janela abriu; se falhar, o `build-linux.log` |
 | #1 versão japonesa | **Funciona** (testador, 27/11): os 10 símbolos achados por assinatura (`same code, moved in this build`), jogo em japonês a 60 fps. Relatou engasgos na compilação de shaders na primeira vez ("igual ao emulador") e pediu DualSense. Respondido em 27/11: engasgos diminuem com o cache (`pipeline_*.bin`); DualSense já é suportado pelo SDL3 (giroscópio, vibração), pedido o `hwder.log` se não funcionar | Ver se o DualSense dele funciona; os engasgos de primeira vez são a pendência "Engasgos de compilação" |
 
 ### Pendências, por ordem
@@ -34,16 +37,18 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
    uma build local já adicionada; sem conta, use o modo de teste (mesmo documento). Pacotes de teste em
    `Downloads\FEW-Recomp-launcher-test` (`v0.3.0-rc1`; o zip do Windows extraído em `windows\`).
 2. **Próxima release**: abrir de novo uma seção "Unreleased" no `CHANGELOG.md` para o que vier; publicar como a
-   v0.3.0 (tag, `package.py` num checkout limpo, os dois arquivos de `dist/` como release normal). Passo a passo em
-   [docs/recomplauncher.md](recomplauncher.md). Cada release faz o launcher recompilar o jogo de quem já tem.
+   v0.4.0 (tag, `package.py` num checkout limpo, os dois arquivos de `dist/` e o `SHA256SUMS` como release normal).
+   Passo a passo em [docs/recomplauncher.md](recomplauncher.md). Cada release faz o launcher recompilar o jogo de
+   quem já tem.
 3. **Catálogo do RecompLauncher**: conta de desenvolvedor pedida pelo dono em 2026-11-27, esperando a aprovação
    manual. Depois, envio em
    `recomplauncher.com/submit?platform=pc`. Conferir se o launcher aceita só o tarball no Linux (o guia pede também
    um AppImage).
 4. **Responder à #2** depois da validação; na #1, acompanhar o teste do usuário japonês.
-5. **Build 3x mais rápido e janela de progresso** (seção abaixo): na `main` desde 2026-11-27, **sem release**. Falta
-   medir o build completo no Deck (tempo e se a janela abre no Modo Desktop), depois publicar numa release nova (o
-   launcher recompila o jogo de quem já tem, agora bem mais rápido).
+5. **Build 3x mais rápido e janela de progresso** (seção abaixo): na **v0.4.0**. Falta o número real no Deck (tempo
+   do build e se a janela abre no Modo Desktop): pedido ao usuário da #3; o dono não tem como testar agora.
+6. **Pré-compilar shaders** para reduzir os engasgos da primeira vez: estudo pedido pelo dono em 2026-11-27 (ver
+   "Estudo: shaders antes de jogar", quando existir).
 
 ### Armadilhas desta sessão
 
@@ -59,7 +64,7 @@ jogo continua em "Retomar aqui (2026-11-16)". Leia antes de qualquer tarefa; atu
 - Teste de ponta a ponta: rodar o `few-prepare.bat` direto, sem `cmd /c`, que remove as aspas de caminhos com espaço.
   O teste do Linux roda no WSL `archlinux`, em `/tmp`. Limpe `%TEMP%\fewt` e `/tmp/few-e2e` no fim.
 
-## Build 3x mais rápido e janela de progresso (2026-11-27, na main sem release)
+## Build 3x mais rápido e janela de progresso (2026-11-27, release v0.4.0)
 
 Pedido do dono: o build do Super Odyssey PC Recomp leva 20–30 min no Deck; o nosso, horas. Medido antes de mudar:
 
