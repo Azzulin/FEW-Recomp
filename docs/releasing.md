@@ -1,40 +1,58 @@
-# Releasing the setup zip
+# Publicar uma versão
 
-> [!NOTE]
-> Inherited from HWDER. This describes the *HWDER Setup* of the original project, which this Fire Emblem Warriors
-> port does not use. To build and play FEW, see [GUIDE.md](../GUIDE.md).
+Uma versão nova sai pelo GitHub Actions: você escreve o que mudou, cria a tag e confere o rascunho. Nenhuma ferramenta
+local é necessária, e nada do jogo entra nos arquivos (só código-fonte e o `FEW Recomp Setup.exe`, que não tem
+código do jogo).
 
-The player download is `HWDER-setup-<version>.zip`: the project source, the pinned third-party
-source with its licence files, and the code-free `HWDER Setup.exe`. It contains no game code,
-keys or game files; Prepare builds the game on the player's PC from their own dump.
+## Passo a passo
 
-## One command
+1. **CHANGELOG.md:** troque `## Unreleased` por `## FEW Recomp vX.Y.Z (AAAA-MM-DD)`, em inglês, para os jogadores.
+   Essa seção vira as notas da release (`tools/release_notes.py`); sem ela, a release para com um aviso.
+2. **Commit e push** na `main` (a CI roda os testes; veja a aba Actions).
+3. **Tag:** `git tag vX.Y.Z` e `git push origin vX.Y.Z`. Pelo site também dá: *Releases > Draft a new release > Choose a
+   tag*, digite a versão e *Create new tag* (mas aí o GitHub já cria um rascunho próprio; prefira a tag pelo git).
+4. **Espere o workflow "Release"** (aba Actions, ~15 min; a primeira vez baixa as ferramentas, depois vêm do cache).
+   Ele roda os testes, compila o `FEW Recomp Setup.exe`, monta o zip do Windows e o tarball do Linux, e cria uma
+   release **em rascunho** com os dois, o `SHA256SUMS` e as notas.
+5. **Confira o rascunho** (*Releases*): as notas, os três arquivos. Baixe o zip, abra o Setup e veja se ele abre. Então
+   **Publish release**. Deixe *Set as a pre-release* desmarcado: o RecompLauncher trata pré-release como beta.
+6. **Depois:** abra de novo um `## Unreleased` no CHANGELOG para a próxima versão, e responda as issues que a versão
+   resolve.
 
-From a clean checkout with submodules initialised and the release tag on HEAD:
+Errou algo? Apague o rascunho e a tag (`git push origin :refs/tags/vX.Y.Z` e `git tag -d vX.Y.Z`), corrija e repita.
 
-    python tools/release_kit.py
+## Ensaio sem publicar
 
-It builds the source kit (`make_dist.py`), installs the pinned toolset from
-`tools/managed_toolchain.json` (public downloads checked by SHA-256), compiles `HWDER Setup.exe`
-(`build.py --setup-ui`), writes its bootstrap certificate, assembles the zip
-(`make_setup_dist.py`) and checks it again: one exe, no generated C, dumps, keys, saves or
-images. Output in `dist/`: the zip and a `.json` summary (with its SHA-256). `--allow-untagged` packages
-a test build. Keep `--work` short on Windows (the toolset nests deep paths).
+*Actions > Release > Run workflow*, com uma versão qualquer (ex. `v0.0.0-test`): faz tudo, mas em vez da release
+guarda os arquivos como *artifact* da execução, para baixar e testar.
 
-## On GitHub
+## O que o workflow faz (`.github/workflows/release.yml`)
 
-`.github/workflows/release.yml` runs the same command on `windows-2022`:
+| Passo | Comando |
+|---|---|
+| Testes | `python -m unittest tools/tests/test_*.py` (os que não precisam do jogo) |
+| Notas | `python tools/release_notes.py vX.Y.Z` |
+| Ferramentas fixadas | `python tools/managed_tools.py --data <pasta> --install` (LLVM-MinGW, CMake, Ninja, Python; SHA-256 conferido) |
+| Bibliotecas | `python tools/fetch_deps.py` (SDL, imgui e headers nos commits do `gerar-few.ps1`) |
+| Setup | `tools/build.py --managed-toolchain <toolchain> --build-ui` → `build/ui/few-build-ui.exe` |
+| Pacotes | `python tools/recomplauncher/package.py --version vX.Y.Z --setup-exe build/ui/few-build-ui.exe` |
+| Release | `gh release create vX.Y.Z --draft ...` |
 
-- Pushing a `v*` tag runs the synthetic tests, builds the zip and the Linux tarball and attaches them
-  to a **draft** release (GitHub shows each asset's SHA-256; no separate `.sha256` files). Publishing (and pasting the release notes) stays manual.
-- Actions > Release setup zip > Run workflow builds an untagged test zip, kept as a workflow
-  artifact only.
+Os mesmos comandos funcionam na sua máquina (PowerShell, na pasta de um clone limpo); o `package.py` recusa um
+checkout com mudanças não commitadas. O zip do Windows leva o setup como `FEW Recomp Setup.exe` na raiz da pasta.
 
-It uses only `GITHUB_TOKEN`. Settings > Actions > General > Workflow permissions can stay
-read-only, since the job asks for `contents: write` itself.
+## O Setup e o antivírus
 
-A second job on `ubuntu-22.04` builds the Linux tarball (`tools/linux/package_release.py`, see
-`docs/linux-release.md`) and the draft release gets both.
+O `FEW Recomp Setup.exe` não é assinado, então o SmartScreen pode pedir *Mais informações > Executar assim mesmo*.
+Para não parecer malware (o setup do HWDER foi marcado como `Wacatac`, ver [antivirus.md](antivirus.md)), ele tem
+ícone, manifesto (sem pedir administrador) e informações de versão, é ligado sem data no binário (o mesmo código dá o
+mesmo arquivo, que mantém a reputação já ganha) e abre o PowerShell **minimizado e visível**, nunca escondido. Mantenha
+essas regras ao mexer em `tools/build_ui/`.
 
-The CI `HWDER Setup.exe` is not byte-identical to a local build, but the
-source and third-party files in the zip are the same as a local package of the same commit.
+## Checklist rápido
+
+- [ ] `CHANGELOG.md` com a seção `## FEW Recomp vX.Y.Z (data)`
+- [ ] push na `main`, CI verde
+- [ ] tag `vX.Y.Z` enviada
+- [ ] rascunho conferido (notas, zip, tarball, SHA256SUMS) e publicado, sem marcar pré-release
+- [ ] `## Unreleased` de volta no CHANGELOG

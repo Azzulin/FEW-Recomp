@@ -36,6 +36,7 @@ import manifest  # noqa: E402
 
 NAME = "FEW-Recomp"
 SYSTEMS = {"windows": "Windows-x64.zip", "linux": "Linux-x64.tar.gz"}
+SETUP_EXE = "FEW Recomp Setup.exe"  # the Windows setup window (tools/build_ui), built by the release workflow
 LINUX_SKIPS = {"SDL"}  # Linux links HWDER's prebuilt static SDL3 (tools/linux/few_build.py)
 # Never in a release, whatever git says (AGENTS.md: dumps, keys and anything derived from them).
 FORBIDDEN = re.compile(r"(\.(nsp|nsz|xci|nca|keys|tik)$|^(generated|data|build|Game Files|Jogar no PC|"
@@ -106,8 +107,9 @@ def fetch_third_party(name, repo, commit, marker, cache):
     return files
 
 
-def contents(system, version, cache):
-    """{path inside the folder: (bytes, executable)} for one system's release file."""
+def contents(system, version, cache, setup_exe=None):
+    """{path inside the folder: (bytes, executable)} for one system's release file. setup_exe: the built
+    FEW Recomp Setup.exe (tools/build_ui, no game code), added to the Windows file at the top of the folder."""
     out = {}
     for path, data, executable in tracked():
         if path == "recomplauncher.json" or (path.startswith("third_party/") and path != "third_party/README.md"):
@@ -123,6 +125,8 @@ def contents(system, version, cache):
         for rel, item in fetch_third_party(name, repo, commit, marker, cache).items():
             out[f"third_party/{name}/{rel}"] = item
     out["RELEASE"] = (version.encode() + b"\n", False)
+    if system == "windows" and setup_exe:
+        out[SETUP_EXE] = (Path(setup_exe).read_bytes(), True)
     out["recomplauncher.json"] = (json.dumps(manifest.manifest(system), indent=2, ensure_ascii=False).encode() + b"\n",
                                   False)
     for required in ("recomplauncher.json", manifest.LAYOUT[system]["prepare"], "tools/recomplauncher/prepare.py"
@@ -163,6 +167,7 @@ def main(argv=None):
     ap.add_argument("--os", nargs="+", choices=sorted(SYSTEMS), default=sorted(SYSTEMS))
     ap.add_argument("--allow-dirty", action="store_true",
                     help="package even with uncommitted changes (what is staged in the index is what ships; tests)")
+    ap.add_argument("--setup-exe", help=f'the built setup window, shipped in the Windows file as "{SETUP_EXE}"')
     a = ap.parse_args(argv)
     if not re.fullmatch(r"v\d+\.\d+\.\d+([-.][0-9A-Za-z.]+)?", a.version):
         ap.error("--version looks like v0.3.0")
@@ -172,12 +177,15 @@ def main(argv=None):
     cache = out / ".third-party-cache"
     cache.mkdir(parents=True, exist_ok=True)
     top = f"{NAME}-{a.version}"
+    sums = []
     for system in a.os:
-        files = contents(system, a.version, cache)
+        files = contents(system, a.version, cache, a.setup_exe)
         target = out / f"{NAME}-{a.version}-{SYSTEMS[system]}"
         (write_zip if system == "windows" else write_tar)(files, top, target)
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         print(f"{target.name}: {len(files)} files, {target.stat().st_size / 1e6:.1f} MB, sha256 {digest}", flush=True)
+        sums.append(f"{digest} *{target.name}")
+    (out / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="ascii", newline="\n")
     return 0
 
 

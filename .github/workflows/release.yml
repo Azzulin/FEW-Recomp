@@ -1,0 +1,96 @@
+# Release: builds FEW Recomp Setup.exe and both packages, and makes the GitHub release, so a release needs no
+# local tools. docs/releasing.md explains the steps.
+#
+#   Actions > Release > Run workflow, "release" ticked -> a DRAFT release of the current main: the Windows zip (with
+#                                                        the setup), the Linux tarball, SHA256SUMS and notes from
+#                                                        CHANGELOG.md. Check it and press Publish (the tag is made then).
+#   the same, "release" not ticked                    -> a dry run: the same files as a workflow artifact, no release
+#   pushing a tag v*                                   -> the same draft release, for that tag
+#
+# Nothing of the game is involved: the packages hold source and the code-free setup window only.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, like v0.5.0 (CHANGELOG.md needs its section to make a release)"
+        required: true
+        default: "v0.0.0-test"
+      release:
+        description: "Make the draft release (unticked: a dry run, files kept as an artifact)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      MAKE_RELEASE: ${{ github.event_name == 'push' || inputs.release }}
+      TOOLS: ${{ runner.temp }}\HWDER
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Unit tests (no game, no network)
+        run: python -m unittest tools/tests/test_build_events.py tools/tests/test_pipeline_catalog.py tools/tests/test_recomplauncher.py tools/tests/test_symbol_sigs.py tools/tests/test_release.py
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          python tools/release_notes.py $env:VERSION > dist/notes.md
+          if ($LASTEXITCODE) { if ($env:MAKE_RELEASE -eq 'true') { exit 1 } else { 'Dry run: no changelog section for this version.' | Set-Content dist/notes.md } }
+
+      - name: Cache the pinned build tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\HWDER
+          key: managed-tools-${{ hashFiles('tools/managed_toolchain.json', 'tools/managed_tools.py') }}
+
+      - name: Pinned build tools (LLVM-MinGW, CMake, Ninja, Python; each SHA-256 checked)
+        run: python tools/managed_tools.py --data "$env:TOOLS" --install
+
+      - name: Third-party sources at the pinned commits
+        run: python tools/fetch_deps.py
+
+      - name: Build FEW Recomp Setup.exe
+        run: |
+          $tc = (Get-ChildItem "$env:TOOLS\managed-tools" -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'complete.json') } | Select-Object -First 1).FullName
+          & "$tc\output\python\python.exe" -B -X utf8 tools/build.py --managed-toolchain $tc --build-ui --build-dir build/ui --jobs 4
+          if ($LASTEXITCODE) { exit 1 }
+          Get-Item build/ui/few-build-ui.exe | Format-List Name, Length
+
+      - name: Packages
+        run: python tools/recomplauncher/package.py --version $env:VERSION --setup-exe build/ui/few-build-ui.exe
+
+      - name: Draft release
+        if: env.MAKE_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = "dist/FEW-Recomp-$env:VERSION-Windows-x64.zip", "dist/FEW-Recomp-$env:VERSION-Linux-x64.tar.gz", "dist/SHA256SUMS"
+          # From a tag: that tag. From the Actions page: this commit; GitHub makes the tag when the draft is published.
+          $where = if ($env:GITHUB_EVENT_NAME -eq 'push') { @('--verify-tag') } else { @('--target', $env:GITHUB_SHA) }
+          gh release create $env:VERSION --draft @where --title "FEW Recomp $env:VERSION" --notes-file dist/notes.md @files
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Keep the files (dry run)
+        if: env.MAKE_RELEASE != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FEW-Recomp-${{ env.VERSION }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/notes.md

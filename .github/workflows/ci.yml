@@ -1,0 +1,21 @@
+# Checks on every push and pull request: the unit tests that need no game, no compiler and no network.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python -m unittest -v tools/tests/test_build_events.py tools/tests/test_pipeline_catalog.py tools/tests/test_recomplauncher.py tools/tests/test_symbol_sigs.py tools/tests/test_release.py

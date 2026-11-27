@@ -1,31 +1,34 @@
-"""Fetch third-party sources into third_party/ (see third_party/README.md).
+"""Puts third_party/<name> at the commits gerar-few.ps1 pins (its $deps list, the one place they are written), from
+GitHub's archives: no git needed. gerar-few.ps1 and build-linux.sh fetch the same commits themselves; this is for the
+release workflow (.github/workflows/release.yml), which builds the setup window before anything else.
 
-In a git checkout prefer `git submodule update --init --recursive`; this script is for source
-archives without submodule metadata.
+    python tools/fetch_deps.py            fetch what is missing
 """
-import os
-import subprocess
+from pathlib import Path
+import sys
 
-TP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "third_party")
-
-# (name, url, ref): ref pins a tag for the shallow clone, None = default branch.
-DEPS = [
-    ("SDL", "https://github.com/libsdl-org/SDL.git", "release-3.2.30"),
-    ("imgui", "https://github.com/ocornut/imgui.git", None),
-    ("spirv-headers", "https://github.com/KhronosGroup/SPIRV-Headers.git", None),
-    ("vulkan-headers", "https://github.com/KhronosGroup/Vulkan-Headers.git", None),
-]
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools" / "recomplauncher"))
+import package  # noqa: E402  (third_party_pins, fetch_third_party)
 
 
 def main():
-    os.makedirs(TP, exist_ok=True)
-    for name, url, ref in DEPS:
-        dst = os.path.join(TP, name)
-        if os.path.isdir(dst) and os.listdir(dst):
+    cache = ROOT / "build" / ".third-party-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    for name, repo, commit, marker in package.third_party_pins():
+        dest = ROOT / "third_party" / name
+        if (dest / marker).is_file():
+            print(f"{name}: present")
             continue
-        branch = ["--branch", ref] if ref else []
-        subprocess.run(["git", "clone", "--depth", "1"] + branch + [url, name], cwd=TP, check=True)
+        for rel, (data, executable) in package.fetch_third_party(name, repo, commit, marker, cache).items():
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            if executable:
+                target.chmod(0o755)
+        print(f"{name}: {repo} @ {commit[:12]}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
